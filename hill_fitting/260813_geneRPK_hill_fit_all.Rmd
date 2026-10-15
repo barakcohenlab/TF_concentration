@@ -1,0 +1,351 @@
+---
+title: "hill_fit_all"
+output: html_document
+date: '2025-07-15'
+---
+
+```{r setup, echo=FALSE, message=F,include=F}
+knitr::opts_chunk$set(message=FALSE, tidy.opts=list(width.cutoff=60), tidy=TRUE) 
+knitr::opts_knit$set(root.dir = '~/Dropbox/tmp_work/RNA_counts/new_norm')
+#knitr::include_graphics()
+library(ggplot2)
+library(ggpmisc)
+library(gplots)
+library(plotrix)
+library(pheatmap)
+library(minpack.lm)
+source("~/Dropbox/scripts/Rcodes/fit_module.R")
+draw_diag <- function(){
+  lines(c(10^(-10),10^10),c(10^(-10),10^10), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+}
+par(bg=NA)
+```
+
+```{r, echo=FALSE, message=F,include=F}
+s_header=c( "seqID","s5" ,  "s4" ,  "s3d5", "s3" ,  "s2d5", "s2" ,  "s1d5", "s1" )
+gene_mpra_2r_3line <- read.table("all_external_norm_RPK.txt",header=T)
+gene_id_list <- as.character(gene_mpra_2r_3line$id)
+gene_id_list[6181]="TTTY1"
+row.names(gene_mpra_2r_3line) <- gene_id_list
+# for (i in gene_id_list[6181]) {
+#   if(is.na(gene_mpra_2r_3line[i,]$id) || i != gene_mpra_2r_3line[i,]$id){
+#     print(i)
+#   }
+# }
+gene_name_match <- data.frame(name=gene_mpra_2r_3line$gene,row.names =gene_id_list)
+
+conc_foxa1 <- rev(c(1.14511152,1.870470303,4.202731758,12.55323512,32.15738598,58.73244109,112.9926126,159.465) )## in nM
+#conc_hnf4a_alone <- c(0.092402533,0.142948133,0.212048449,0.533705059,2.215395846,4.290815763,9.721368368,14.69)*3.2319466 ## in nM
+conc_hnf4a_alone <- rev(c(0.2986401 , 0.4620007,  0.6853293  ,1.7249063  ,7.1600411 ,13.8676874 ,31.4189434 ,47.4772956))
+
+#conc_hnf4a <- c(0.261512863,0.294713335,0.502006255,1.114882814,1.52022912,4.100298822,13.96516233,27.00893)*3.2319466
+conc_hnf4a <- rev(c(0.8451956 , 0.9524978 , 1.6224574 , 3.6032417 , 4.9132993 ,13.2519468 ,45.1346589, 87.2914195))
+
+conc_dox <- rev(c(0.004, 0.02, 0.05, 0.1, 0.25, 0.5, 1.25, 2.5))
+
+
+#kd_score_F_table <- (read.table("~/mnt/scratch/sequencing/predicted_kas/foxa1_kas_nt1_v8v_v8_1e3_0725.txt" ,row.names = 1,sep = "\t",col.names = c("name","kas","kap2","kap3")))
+#kd_score_H_table <- (read.table("~/mnt/scratch/sequencing/predicted_kas/hnf4a_kas_nt30_v8v_v8_1e3_0725.txt" ,row.names = 1,sep = "\t",col.names = c("name","kas","kap2","kap3")))
+
+#bc_full_list <- row.names(lib2_mpra_3rMean)
+training_list <-gene_id_list[order(gene_mpra_2r_3line$r3_S1/(gene_mpra_2r_3line$r3_S5+1),decreasing = TRUE)]
+training_list <- training_list[which(rowSums(is.na(gene_mpra_2r_3line[training_list,1:48]))==0)]
+training_list <- training_list[which(rowSums((gene_mpra_2r_3line[training_list,1:48]))>0)]
+#test<- gene_mpra_2r_3line[training_list,]
+rep_cor <- vapply(seq_len(nrow(gene_mpra_2r_3line)), function(i) {
+  suppressWarnings(cor(as.numeric(gene_mpra_2r_3line[i,c(1:8,17:24,33:40) ]), as.numeric(gene_mpra_2r_3line[i, c(9:16,25:32,41:48)]),
+      use = "pairwise.complete.obs", method = "pearson"))
+}, numeric(1))
+names(rep_cor) <- gene_id_list
+training_list <- training_list[which(rep_cor[training_list]>0.8 & rowSums(gene_mpra_2r_3line[,1:48] != 0, na.rm = TRUE)[training_list]>=18)]
+
+#test <- data.frame(1.5/(kd_score_F_table[bc_full_list,]$kas*kd_score_H_table[bc_full_list,]$kas),row.names = bc_full_list)
+#training_list <-c("L1_7highF")
+#training_list <-c("L1_7highF","L1_3highH3highF")
+#training_list <-bc_full_list[grep("aff_chr1_",bc_full_list)]
+#training_list <-bc_full_list[grep("FHsfla.*ho2_chr1",bc_full_list)]
+#training_list <-bc_full_list[seq(1,2000,20)]
+#training_list <- c("chr8_95907923_95908123","chr6_52680164_52680364_scr","chr5_42875071_42875271")
+#training_list <- c("chr16_3156891_3157091","KmpraOther_peak26148:0.7064","chr10_70939604_70939804","chr11_102164757_102164957","chr8_95907923_95908123","chr6_52680164_52680364_scr","chr5_42875071_42875271","L1_7highF","L1_3highH3highF")
+
+
+```
+
+### initialization
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="25%", out.height="25%", warning=F, results='show', fig.show='show',message=FALSE}
+i <- "chr8_97603671_97603871"
+
+number_of_cre <- length(training_list)
+
+
+curr_trained_4par_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),regP=rep(NA,number_of_cre),r2=rep(NA,number_of_cre),row.names = training_list)
+curr_trained_4std_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),regP=rep(NA,number_of_cre),row.names = training_list)
+curr_trained_4p_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),row.names = training_list)
+
+r1_trained_4std_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),row.names = training_list)
+r2_trained_4std_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),row.names = training_list)
+r3_trained_4std_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),row.names = training_list)
+
+curr_trained_biostd_df <- data.frame(Name=training_list,Kd=rep(NA,number_of_cre),n=rep(NA,number_of_cre),Fmax=rep(NA,number_of_cre),basal=rep(NA,number_of_cre),regP=rep(NA,number_of_cre),row.names = training_list)
+
+
+
+correlations <- data.frame(m1=rep(NA,number_of_cre),row.names = training_list)
+```
+
+### K4FH
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="25%", out.height="25%", warning=F, results='show', fig.show='show',message=FALSE}
+gene_mpra_3rMean <- (read.table("mean_k4fh_external_norm_RPK.txt",header=T)[,1:8])
+row.names(gene_mpra_3rMean) <- gene_id_list
+r2_hsp_matrix <-( gene_mpra_2r_3line[,33:40])
+r1_hsp_matrix <- (gene_mpra_2r_3line[,41:48])
+
+top_200_nonmonotonic <- gene_id_list[order(rank((gene_mpra_3rMean$r3_S1+1)/(gene_mpra_3rMean$r3_S1d5+1))+rank(-gene_mpra_3rMean$r3_S1))[1:300]]
+ctrl_200_monotonic <- gene_id_list[order(rank((gene_mpra_3rMean$r3_S5+1)/(gene_mpra_3rMean$r3_S1+1))+rank(-gene_mpra_3rMean$r3_S1))[1:300]]
+#write.table(top_200_nonmonotonic,"~/mnt/scratch/pol2_cuttag/CutAndRun/alignment/endo_gene_list/top_200_nonmonotonic.txt",sep="\t",quote=F,row.names = F,col.names = F)
+#write.table(ctrl_200_monotonic,"~/mnt/scratch/pol2_cuttag/CutAndRun/alignment/endo_gene_list/ctrl_200_monotonic.txt",sep="\t",quote=F,row.names = F,col.names = F)
+
+
+fc_df <- data.frame(fc=(gene_mpra_3rMean[,1]+1)/(gene_mpra_3rMean[,8]+1), row.names = row.names(gene_mpra_3rMean))
+
+for (i in training_list) { # smallError_list
+#for (i in c("chr14_94862400_94862600_posS")) { # smallError_list
+conc_tf=conc_foxa1*conc_hnf4a
+lib_3rMean=gene_mpra_3rMean
+sf  <- splinefun(log(conc_tf), lib_3rMean[i,], method = "natural")  # or loess then predict
+xx  <- seq(min(log(conc_tf), na.rm=TRUE), max(log(conc_tf), na.rm=TRUE), length.out = 2000)
+dydx <- abs(sf(xx, deriv = 1))
+x_star <- exp(xx[which.max(dydx)])
+Kd_start_=x_star
+n_start=2
+#lower_Kd=1/(9*kd_score_F_table[i,]$kas*kd_score_H_table[i,]$kas)
+lower_Kd=min(conc_tf)
+upper_Kd= max(conc_tf)  # max(1/kd_score_F_table[i,]$kas/kd_score_H_table[i,]$kas,conc_tf)  # max(conc_tf)
+range_x <- exp(c(seq(-4,10,0.2)))
+
+  tmp_output <- fit_2r_function_order_loop_coefstd(conc_tf,lib_3rMean,r1_hsp_matrix,r2_hsp_matrix,Kd_start_,n_start,lower_Kd,upper_Kd,range_x,seq_name=i,printName=T)
+  correlations[i,] <- tmp_output$r2[1]
+
+  curr_trained_4par_df[i,]$Kd <- tmp_output$coef$Kd
+  curr_trained_4par_df[i,]$n <- tmp_output$coef$n
+  curr_trained_4par_df[i,]$Fmax <- tmp_output$coef$Fmax
+  curr_trained_4par_df[i,]$basal <- tmp_output$coef$basal
+  curr_trained_4par_df[i,]$regP <- tmp_output$coef$regP
+  curr_trained_4par_df[i,]$r2 <- tmp_output$r2[1]
+
+  curr_trained_4std_df[i,]$Kd <- tmp_output$std$Kd
+  curr_trained_4std_df[i,]$n <- tmp_output$std$n
+  curr_trained_4std_df[i,]$Fmax <- tmp_output$std$Fmax
+  curr_trained_4std_df[i,]$basal <- tmp_output$std$basal
+  curr_trained_4std_df[i,]$regP <- tmp_output$std$regP
+
+  curr_trained_4p_df[i,]$Kd <- tmp_output$pvalue$Kd
+  curr_trained_4p_df[i,]$n <- tmp_output$pvalue$n
+  curr_trained_4p_df[i,]$Fmax <- tmp_output$pvalue$Fmax
+  curr_trained_4p_df[i,]$basal <- tmp_output$pvalue$basal
+
+    r1_trained_4std_df[i,]$Kd <- tmp_output$coef1$Kd
+  r1_trained_4std_df[i,]$n <- tmp_output$coef1$n
+  r1_trained_4std_df[i,]$Fmax <- tmp_output$coef1$Fmax
+  r1_trained_4std_df[i,]$basal <- tmp_output$coef1$basal
+
+  r2_trained_4std_df[i,]$Kd <- tmp_output$coef2$Kd
+  r2_trained_4std_df[i,]$n <- tmp_output$coef2$n
+  r2_trained_4std_df[i,]$Fmax <- tmp_output$coef2$Fmax
+  r2_trained_4std_df[i,]$basal <- tmp_output$coef2$basal
+
+
+  curr_trained_biostd_df[i,]$Kd <- tmp_output$biostd$Kd
+  curr_trained_biostd_df[i,]$n <- tmp_output$biostd$n
+  curr_trained_biostd_df[i,]$Fmax <- tmp_output$biostd$Fmax
+  curr_trained_biostd_df[i,]$basal <- tmp_output$biostd$basal
+  curr_trained_biostd_df[i,]$regP <- tmp_output$biostd$regP
+
+}
+
+plot(fc_df[training_list,],curr_trained_4par_df[training_list,]$Fmax/curr_trained_4par_df$basal,log="xy")
+draw_diag()
+#new_pars <- fit_all(curr_trained_4par_df,order1_list,order2_list,order3_list)
+#changing_Fmax1 <- new_pars$Fmax
+hist(correlations$m1,breaks=20)
+
+
+write.table(curr_trained_4par_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_par.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_coefstd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4p_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_pvalues.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+write.table(r1_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_par_r1.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(r2_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_par_r2.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+write.table(curr_trained_biostd_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_biostd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+```
+
+### K1F
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="25%", out.height="25%", warning=F, results='show', fig.show='show',message=FALSE}
+gene_mpra_3rMean <- (read.table("mean_k1f_external_norm_RPK.txt",header=T)[,1:8])
+row.names(gene_mpra_3rMean) <- gene_id_list
+r2_hsp_matrix <-( gene_mpra_2r_3line[,1:8])
+r1_hsp_matrix <- (gene_mpra_2r_3line[,9:16])
+
+fc_df <- data.frame(fc=(gene_mpra_3rMean[,1]+1)/(gene_mpra_3rMean[,8]+1), row.names = row.names(gene_mpra_3rMean))
+
+for (i in training_list) { # smallError_list
+#for (i in c("chr14_94862400_94862600_posS")) { # smallError_list
+conc_tf=conc_foxa1
+lib_3rMean=gene_mpra_3rMean
+sf  <- splinefun(log(conc_tf), lib_3rMean[i,], method = "natural")  # or loess then predict
+xx  <- seq(min(log(conc_tf), na.rm=TRUE), max(log(conc_tf), na.rm=TRUE), length.out = 2000)
+dydx <- abs(sf(xx, deriv = 1))
+x_star <- exp(xx[which.max(dydx)])
+Kd_start_=x_star
+n_start=2
+lower_Kd=min(conc_tf)
+upper_Kd= max(conc_tf) # max(1/kd_score_F_table[i,]$kas,conc_tf)   # max(conc_tf)
+range_x <- exp(c(seq(-0,8,0.1)))
+
+
+  tmp_output <- fit_2r_function_order_loop_coefstd(conc_tf,lib_3rMean,r1_hsp_matrix,r2_hsp_matrix,Kd_start_,n_start,lower_Kd,upper_Kd,range_x,seq_name=i,printName=T)
+  correlations[i,] <- tmp_output$r2[1]
+
+  curr_trained_4par_df[i,]$Kd <- tmp_output$coef$Kd
+  curr_trained_4par_df[i,]$n <- tmp_output$coef$n
+  curr_trained_4par_df[i,]$Fmax <- tmp_output$coef$Fmax
+  curr_trained_4par_df[i,]$basal <- tmp_output$coef$basal
+  curr_trained_4par_df[i,]$regP <- tmp_output$coef$regP
+  curr_trained_4par_df[i,]$r2 <- tmp_output$r2[1]
+
+  curr_trained_4std_df[i,]$Kd <- tmp_output$std$Kd
+  curr_trained_4std_df[i,]$n <- tmp_output$std$n
+  curr_trained_4std_df[i,]$Fmax <- tmp_output$std$Fmax
+  curr_trained_4std_df[i,]$basal <- tmp_output$std$basal
+  curr_trained_4std_df[i,]$regP <- tmp_output$std$regP
+
+  curr_trained_4p_df[i,]$Kd <- tmp_output$pvalue$Kd
+  curr_trained_4p_df[i,]$n <- tmp_output$pvalue$n
+  curr_trained_4p_df[i,]$Fmax <- tmp_output$pvalue$Fmax
+  curr_trained_4p_df[i,]$basal <- tmp_output$pvalue$basal
+
+    r1_trained_4std_df[i,]$Kd <- tmp_output$coef1$Kd
+  r1_trained_4std_df[i,]$n <- tmp_output$coef1$n
+  r1_trained_4std_df[i,]$Fmax <- tmp_output$coef1$Fmax
+  r1_trained_4std_df[i,]$basal <- tmp_output$coef1$basal
+
+  r2_trained_4std_df[i,]$Kd <- tmp_output$coef2$Kd
+  r2_trained_4std_df[i,]$n <- tmp_output$coef2$n
+  r2_trained_4std_df[i,]$Fmax <- tmp_output$coef2$Fmax
+  r2_trained_4std_df[i,]$basal <- tmp_output$coef2$basal
+
+
+  curr_trained_biostd_df[i,]$Kd <- tmp_output$biostd$Kd
+  curr_trained_biostd_df[i,]$n <- tmp_output$biostd$n
+  curr_trained_biostd_df[i,]$Fmax <- tmp_output$biostd$Fmax
+  curr_trained_biostd_df[i,]$basal <- tmp_output$biostd$basal
+  curr_trained_biostd_df[i,]$regP <- tmp_output$biostd$regP
+
+
+}
+
+plot(fc_df[training_list,],curr_trained_4par_df[training_list,]$Fmax/curr_trained_4par_df$basal,log="xy")
+draw_diag()
+#new_pars <- fit_all(curr_trained_4par_df,order1_list,order2_list,order3_list)
+#changing_Fmax1 <- new_pars$Fmax
+hist(correlations$m1,breaks=20)
+
+
+write.table(curr_trained_4par_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_par.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_coefstd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4p_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_pvalues.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(r1_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_par_r1.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(r2_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_par_r2.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_biostd_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_biostd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+```
+
+### K3H
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="25%", out.height="25%", warning=F, results='show', fig.show='show',message=FALSE}
+gene_mpra_3rMean <- (read.table("mean_k3h_external_norm_RPK.txt",header=T)[,1:8])
+row.names(gene_mpra_3rMean) <- gene_id_list
+r2_hsp_matrix <-( gene_mpra_2r_3line[,17:24])
+r1_hsp_matrix <- (gene_mpra_2r_3line[,25:32])
+
+fc_df <- data.frame(fc=(gene_mpra_3rMean[,1]+1)/(gene_mpra_3rMean[,8]+1), row.names = row.names(gene_mpra_3rMean))
+
+for (i in training_list) { # smallError_list
+#for (i in c("chr14_94862400_94862600_posS")) { # smallError_list
+conc_tf=conc_hnf4a_alone
+lib_3rMean=gene_mpra_3rMean
+sf  <- splinefun(log(conc_tf), lib_3rMean[i,], method = "natural")  # or loess then predict
+xx  <- seq(min(log(conc_tf), na.rm=TRUE), max(log(conc_tf), na.rm=TRUE), length.out = 2000)
+dydx <- abs(sf(xx, deriv = 1))
+x_star <- exp(xx[which.max(dydx)])
+Kd_start_=x_star
+n_start=2
+lower_Kd=min(conc_tf)
+upper_Kd= max(conc_tf) # max(1/kd_score_H_table[i,]$kas,conc_tf) ## max(conc_tf)
+range_x <- exp(c(seq(-4,8,0.1)))
+
+
+  tmp_output <- fit_2r_function_order_loop_coefstd(conc_tf,lib_3rMean,r1_hsp_matrix,r2_hsp_matrix,Kd_start_,n_start,lower_Kd,upper_Kd,range_x,seq_name=i,printName=T)
+  correlations[i,] <- tmp_output$r2[1]
+
+  curr_trained_4par_df[i,]$Kd <- tmp_output$coef$Kd
+  curr_trained_4par_df[i,]$n <- tmp_output$coef$n
+  curr_trained_4par_df[i,]$Fmax <- tmp_output$coef$Fmax
+  curr_trained_4par_df[i,]$basal <- tmp_output$coef$basal
+  curr_trained_4par_df[i,]$regP <- tmp_output$coef$regP
+  curr_trained_4par_df[i,]$r2 <- tmp_output$r2[1]
+
+  curr_trained_4std_df[i,]$Kd <- tmp_output$std$Kd
+  curr_trained_4std_df[i,]$n <- tmp_output$std$n
+  curr_trained_4std_df[i,]$Fmax <- tmp_output$std$Fmax
+  curr_trained_4std_df[i,]$basal <- tmp_output$std$basal
+  curr_trained_4std_df[i,]$regP <- tmp_output$std$regP
+
+  curr_trained_4p_df[i,]$Kd <- tmp_output$pvalue$Kd
+  curr_trained_4p_df[i,]$n <- tmp_output$pvalue$n
+  curr_trained_4p_df[i,]$Fmax <- tmp_output$pvalue$Fmax
+  curr_trained_4p_df[i,]$basal <- tmp_output$pvalue$basal
+
+    r1_trained_4std_df[i,]$Kd <- tmp_output$coef1$Kd
+  r1_trained_4std_df[i,]$n <- tmp_output$coef1$n
+  r1_trained_4std_df[i,]$Fmax <- tmp_output$coef1$Fmax
+  r1_trained_4std_df[i,]$basal <- tmp_output$coef1$basal
+
+  r2_trained_4std_df[i,]$Kd <- tmp_output$coef2$Kd
+  r2_trained_4std_df[i,]$n <- tmp_output$coef2$n
+  r2_trained_4std_df[i,]$Fmax <- tmp_output$coef2$Fmax
+  r2_trained_4std_df[i,]$basal <- tmp_output$coef2$basal
+
+
+  curr_trained_biostd_df[i,]$Kd <- tmp_output$biostd$Kd
+  curr_trained_biostd_df[i,]$n <- tmp_output$biostd$n
+  curr_trained_biostd_df[i,]$Fmax <- tmp_output$biostd$Fmax
+  curr_trained_biostd_df[i,]$basal <- tmp_output$biostd$basal
+  curr_trained_biostd_df[i,]$regP <- tmp_output$biostd$regP
+
+
+}
+
+plot(fc_df[training_list,],curr_trained_4par_df[training_list,]$Fmax/curr_trained_4par_df$basal,log="xy")
+draw_diag()
+#new_pars <- fit_all(curr_trained_4par_df,order1_list,order2_list,order3_list)
+#changing_Fmax1 <- new_pars$Fmax
+hist(correlations$m1,breaks=20)
+
+
+write.table(curr_trained_4par_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_par.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_coefstd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_4p_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_pvalues.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(r1_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_par_r1.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(r2_trained_4std_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_par_r2.txt",sep="\t",quote=F,row.names = F,col.names = T)
+write.table(curr_trained_biostd_df,"~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_biostd.txt",sep="\t",quote=F,row.names = F,col.names = T)
+
+
+#source("~/Dropbox/scripts/Rcodes/250709_std.R")
+
+```
