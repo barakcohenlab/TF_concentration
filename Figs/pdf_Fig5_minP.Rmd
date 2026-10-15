@@ -1,0 +1,647 @@
+---
+title: "250711_minP"
+output: pdf_document
+date: '2025-07-12'
+---
+
+```{r setup, echo=FALSE, message=F,include=F}
+knitr::opts_chunk$set(message=FALSE, tidy.opts=list(width.cutoff=60), tidy=TRUE) 
+knitr::opts_knit$set(root.dir = '~/Dropbox/postdoc/tft_metadata/')
+#knitr::include_graphics()
+library(ggplot2)
+library(ggpmisc)
+library(gplots)
+library(plotrix)
+library(pheatmap)
+library(viridis)
+library(reshape2)
+library(ggpointdensity)
+
+library(minpack.lm)
+draw_diag <- function(col="#A6A6A6",alpha_value=0.75,lwd=1.5,lty=1){
+  usr <- par("usr")
+  x_limits <- if(isTRUE(par("xlog"))) 10^usr[1:2] else usr[1:2]
+  y_limits <- if(isTRUE(par("ylog"))) 10^usr[3:4] else usr[3:4]
+  line_limits <- c(max(x_limits[1],y_limits[1]),
+                   min(x_limits[2],y_limits[2]))
+
+  if(all(is.finite(line_limits)) && line_limits[1] <= line_limits[2]){
+    segments(line_limits[1],line_limits[1],line_limits[2],line_limits[2],
+             col=alpha(col,alpha_value),lwd=lwd,lty=lty,xpd=FALSE)
+  }
+  invisible(line_limits)
+}
+
+extend_plot_limits <- function(values,log_axis=FALSE,fraction=0.1){
+  values <- as.numeric(values)
+  values <- values[is.finite(values)]
+  if(log_axis){
+    values <- values[values>0]
+    limits <- range(log10(values))
+    span <- diff(limits)
+    if(span==0) span <- 1
+    return(10^(limits+c(-fraction,fraction)*span))
+  }
+
+  limits <- range(values)
+  span <- diff(limits)
+  if(span==0) span <- max(abs(limits),1)
+  limits+c(-fraction,fraction)*span
+}
+
+# Match the parameter notation used in pdf_25_Fig2_hepG2Synergy.Rmd.
+metric_label <- function(label){
+  if(!is.character(label) || length(label) != 1){
+    return(label)
+  }
+
+  labels <- list(
+    "regP"=expression("RegP"),
+    "RegP"=expression("RegP"),
+    "EC50"=expression("EC"[textstyle("50")]),
+    "n"=expression("n"[textstyle("H")]),
+    "nH"=expression("n"[textstyle("H")]),
+    "Hill coefficient"=expression("n"[textstyle("H")]),
+    "Abasal"=expression("A"[textstyle("basal")]),
+    "basal"=expression("A"[textstyle("basal")]),
+    "basal activity"=expression("A"[textstyle("basal")]),
+    "Amax"=expression("A"[textstyle("max")]),
+    "Fmax"=expression("A"[textstyle("max")]),
+    "max activity"=expression("A"[textstyle("max")]),
+    "synergy"=expression("Synergy"),
+    "Synergy"=expression("Synergy"),
+    "hepG2synergy"=expression("Synergy")
+  )
+  if(!is.null(labels[[label]])) labels[[label]] else label
+}
+
+metric_axis_labels <- function(labels){
+  as.expression(lapply(labels, function(label){
+    formatted <- metric_label(label)
+    if(is.expression(formatted)) formatted[[1]] else formatted
+  }))
+}
+par(bg=NA)
+```
+
+
+### top
+
+```{r, echo=FALSE, message=F,include=F}
+
+conc_foxa1 <- c(1.14511152,1.870470303,4.202731758,12.55323512,32.15738598,58.73244109,112.9926126,159.465) ## in nM
+conc_hnf4a_alone <- c(0.2986401 , 0.4620007,  0.6853293  ,1.7249063  ,7.1600411 ,13.8676874 ,31.4189434 ,47.4772956)
+conc_hnf4a <- c(0.8451956 , 0.9524978 , 1.6224574 , 3.6032417 , 4.9132993 ,13.2519468 ,45.1346589, 87.2914195)
+
+ gHill_par_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+bc_full_list <- row.names(gHill_par_foxa1_k4fh)
+gHill_par_foxa1_k4fh$n <- gHill_par_foxa1_k4fh$n*2
+
+  gHill_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_std_foxa1_k4fh$n <- gHill_std_foxa1_k4fh$n*2
+#  gHill_std_foxa1_k4fh$synergy <- Inf
+#    gHill_std_foxa1_k4fh$regP <- Inf
+
+  ### Hill stderr
+  fit_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k4fh$synergy <- gHill_par_foxa1_k4fh$regP-(gHill_par_foxa1_k1f$regP+gHill_par_foxa1_k3h$regP)
+fit_std_foxa1_k4fh$n <- fit_std_foxa1_k4fh$n*2
+#fit_std_foxa1_k4fh$regP <- Inf
+  
+ mP_gHill_par_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+ mP_gHill_par_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k1f_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+ mP_gHill_par_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k3h_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+mP_gHill_par_foxa1_k4fh$n <- mP_gHill_par_foxa1_k4fh$n*2
+
+   mP_gHill_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k4fh_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+   mP_gHill_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k1f_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+   mP_gHill_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k3h_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+mP_gHill_std_foxa1_k4fh$n <- mP_gHill_std_foxa1_k4fh$n*2
+#   mP_gHill_std_foxa1_k4fh$synergy <- Inf
+#   mP_gHill_std_foxa1_k4fh$regP <- Inf
+  ### Hill stderr
+   mP_fit_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k4fh_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+   mP_fit_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k1f_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+   mP_fit_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/gHill_lib1_k3h_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+ mP_gHill_par_foxa1_k4fh$synergy <- mP_gHill_par_foxa1_k4fh$regP-(mP_gHill_par_foxa1_k1f$regP+mP_gHill_par_foxa1_k3h$regP)
+mP_fit_std_foxa1_k4fh$n <- mP_fit_std_foxa1_k4fh$n*2
+# mP_fit_std_foxa1_k4fh$regP <- Inf
+
+lib1_dose_synergy <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy.txt" ,row.names = 1,sep = "\t",header = T)
+lib1_dose_synergy_std <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy_std.txt" ,row.names = 1,sep = "\t",header = T)
+mP_lib1_dose_synergy <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/lib1_dose_synergy.txt" ,row.names = 1,sep = "\t",header = T)
+mP_lib1_dose_synergy_std <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se/lib1_dose_synergy_std.txt" ,row.names = 1,sep = "\t",header = T)
+
+gHill_par_foxa1_k4fh$hepG2synergy <- lib1_dose_synergy[row.names(gHill_par_foxa1_k4fh),]$hepG2_synergy
+gHill_std_foxa1_k4fh$hepG2synergy <- lib1_dose_synergy_std[row.names(gHill_std_foxa1_k4fh),]$hepG2_synergy_sd
+mP_gHill_par_foxa1_k4fh$hepG2synergy <- mP_lib1_dose_synergy[row.names(mP_gHill_par_foxa1_k4fh),]$hepG2_synergy
+mP_gHill_std_foxa1_k4fh$hepG2synergy <- mP_lib1_dose_synergy_std[row.names(mP_gHill_std_foxa1_k4fh),]$hepG2_synergy_sd
+
+```
+
+```{r promoter-activity-barplot, eval=TRUE, fig.width=2.5, fig.height=3, dpi=300, echo=FALSE, warning=FALSE, results='show'}
+promoter_activity <- data.frame(
+  promoter=factor(c("hsp68","minP"), levels=c("hsp68","minP")),
+  mean=c(70.9391199,1),
+  se=c(7.32948691,0.03011849)
+)
+
+ggplot(promoter_activity, aes(x=promoter, y=mean, fill=promoter))+
+  geom_col(width=0.58, color=NA)+
+  geom_errorbar(aes(ymin=mean-se, ymax=mean+se),
+                width=0.18, linewidth=0.65, color="gray25")+
+  geom_text(aes(y=mean+se+3.2, label=sprintf("%.1f",mean)),
+            size=3.8, color="gray25")+
+  scale_fill_manual(values=c(hsp68="#438FCF",minP="lightblue"))+
+  scale_y_continuous(limits=c(0,90), breaks=seq(0,90,10),
+                     expand=expansion(mult=c(0,0)))+
+  labs(x=NULL, y="Activity (fold of minP)")+
+  theme_classic(base_size=11)+
+  theme(
+    legend.position="none",
+    axis.title.y=element_text(size=10.8, margin=margin(r=9)),
+    axis.text.x=element_text(color="gray25", size=9.6),
+    axis.text.y=element_text(color="gray25", size=9.6),
+    axis.line=element_line(color="gray25", linewidth=0.5),
+    axis.ticks=element_line(color="gray25", linewidth=0.5),
+    plot.margin=margin(8,10,8,8)
+  )
+```
+
+### activity direct comparison
+```{r , eval=TRUE, fig.width=3, fig.height=3.5, dpi=300, echo=FALSE, warning=FALSE, results='show'}
+s_header=c( "seqID","s5" ,  "s4" ,  "s3d5", "s3" ,  "s2d5", "s2" ,  "s1d5", "s1" )
+lib1_k4fh_3rMean <- read.table("~/Dropbox/postdoc/tft_metadata/k4fh_hsp_3rMean.txt",col.names = s_header,row.names = 1)
+mP_lib1_k4fh_3rMean <- read.table("~/Dropbox/postdoc/tft_metadata/k4fh_minP_3rMean.txt",col.names = s_header,row.names = 1)
+
+dat <- data.frame(x=unlist(lib1_k4fh_3rMean[bc_full_list,]),y=unlist(mP_lib1_k4fh_3rMean[bc_full_list,]))
+
+sizes <- c(1:8)^0.6/2.2
+plot(rep(4,8),c(1:8),cex=sizes,pch=16)
+dat$size <- rep(sizes,each=length(bc_full_list))
+colors_pb <- ggplot_build( ggplot(dat)  + geom_pointdensity(aes(x, y)) +scale_color_viridis()+scale_x_log10()+scale_y_log10())
+colors_matrix <- matrix(colors_pb$data[[1]]$colour,ncol = 8)
+
+plot(c(lib1_k4fh_3rMean[bc_full_list,]$s5,lib1_k4fh_3rMean[bc_full_list,]$s1d5),c(mP_lib1_k4fh_3rMean[bc_full_list,]$s5,mP_lib1_k4fh_3rMean[bc_full_list,]$s1d5),log="xy",col="white",xlab="hsp68",ylab="minP",xlim=c(extend_plot_limits(c(0.25,500),log_axis=TRUE)[1],500),ylim=c(extend_plot_limits(c(0.25,2000),log_axis=TRUE)[1],2000),xaxs="i",yaxs="i",axes = FALSE, ann = FALSE)
+  axis(2, at = c(1,10,100,1000), lwd=1, tck=-0.025,
+       col=rgb(0,0,0,0), col.ticks="black", padj=1.7, cex.axis=0.8)
+  axis(1, at = c(1,10,100,1000), lwd=1, tck=-0.025,
+       col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+
+    title(ylab="minP-CRE", xlab="hsp68-CRE", main="MPRA activity",
+          line=1.2, cex.lab=0.9)
+  abline(h=c(1,10,100,1000), col="lightgray", lty=1, lwd=0.75)
+  
+setcol <- rev(viridis(8))
+
+for (i in c(8:1)) {
+ 
+  # points(lib1_k4fh_3rMean[bc_full_list,i],mP_lib1_k4fh_3rMean[bc_full_list,i], col=alpha(colors_matrix[,i],0.75),pch=16,cex=i^0.6/2.2)
+    points(lib1_k4fh_3rMean[bc_full_list,i],mP_lib1_k4fh_3rMean[bc_full_list,i], col=alpha(setcol[i],0.5),pch=16,cex=1)
+  print(cor(log(lib1_k4fh_3rMean[bc_full_list,i]),log(mP_lib1_k4fh_3rMean[bc_full_list,i]),use="pairwise.complete.obs")^2)
+
+}
+draw_diag()
+box()
+
+pheatmap(c(1:8),cluster_rows = FALSE, cluster_cols = FALSE,
+         color = setcol,
+         breaks = c(1:9-0.5),
+         legend_breaks = c(1:8),
+         legend_labels = c(1:8))
+
+```
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="33%", warning=F, results='show'}
+
+  
+    r2_cut <- 0.
+portion_cut <- 1
+smallError_list <- bc_full_list[which(gHill_par_foxa1_k1f[bc_full_list,]$r2> r2_cut & (fit_std_foxa1_k1f[bc_full_list,]$n)<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$n & (fit_std_foxa1_k1f[bc_full_list,]$Kd)<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$Kd & gHill_par_foxa1_k1f[bc_full_list,]$Kd < max(conc_foxa1) 
+                                      &  abs(log10(gHill_par_foxa1_k1f[bc_full_list,]$n))<1)]
+largeError_list <-setdiff(bc_full_list,smallError_list)
+
+smallError_list2 <- bc_full_list[which(gHill_par_foxa1_k3h[bc_full_list,]$r2> r2_cut  & fit_std_foxa1_k3h[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$n & fit_std_foxa1_k3h[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$Kd & gHill_par_foxa1_k3h[bc_full_list,]$Kd < max(conc_hnf4a_alone)
+                                       &  abs(log10(gHill_par_foxa1_k3h[bc_full_list,]$n))<1)]
+largeError_list2 <-setdiff(bc_full_list,smallError_list2)
+test <- fit_std_foxa1_k3h[smallError_list2,]
+
+smallError_list3 <- bc_full_list[which(gHill_par_foxa1_k4fh[bc_full_list,]$r2> r2_cut & fit_std_foxa1_k4fh[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$n & fit_std_foxa1_k4fh[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$Kd & gHill_par_foxa1_k4fh[bc_full_list,]$Kd < max(conc_hnf4a*conc_foxa1)
+                                        &  abs(log10(gHill_par_foxa1_k4fh[bc_full_list,]$n))<1)]
+largeError_list3 <-setdiff(bc_full_list,smallError_list3)
+
+
+final_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+length(final_smallError)
+
+#portion_cut <- 100
+
+mP_smallError_list <- bc_full_list[which(mP_gHill_par_foxa1_k1f[bc_full_list,]$r2> r2_cut & mP_fit_std_foxa1_k1f[bc_full_list,]$n<portion_cut*mP_gHill_par_foxa1_k1f[bc_full_list,]$n & mP_fit_std_foxa1_k1f[bc_full_list,]$Kd<portion_cut*mP_gHill_par_foxa1_k1f[bc_full_list,]$Kd & mP_gHill_par_foxa1_k1f[bc_full_list,]$Kd < max(conc_foxa1) 
+                                      &  abs(log10(mP_gHill_par_foxa1_k1f[bc_full_list,]$n))<1)]
+
+mP_smallError_list2 <- bc_full_list[which(mP_gHill_par_foxa1_k3h[bc_full_list,]$r2> r2_cut  & mP_fit_std_foxa1_k3h[bc_full_list,]$n<portion_cut*mP_gHill_par_foxa1_k3h[bc_full_list,]$n & mP_fit_std_foxa1_k3h[bc_full_list,]$Kd<portion_cut*mP_gHill_par_foxa1_k3h[bc_full_list,]$Kd & mP_gHill_par_foxa1_k3h[bc_full_list,]$Kd < max(conc_hnf4a_alone)
+                                       &  abs(log10(mP_gHill_par_foxa1_k3h[bc_full_list,]$n))<1)]
+
+mP_smallError_list3 <- bc_full_list[which(mP_gHill_par_foxa1_k4fh[bc_full_list,]$r2> r2_cut & mP_fit_std_foxa1_k4fh[bc_full_list,]$n<portion_cut*mP_gHill_par_foxa1_k4fh[bc_full_list,]$n & mP_fit_std_foxa1_k4fh[bc_full_list,]$Kd<portion_cut*mP_gHill_par_foxa1_k4fh[bc_full_list,]$Kd & mP_gHill_par_foxa1_k4fh[bc_full_list,]$Kd < max(conc_hnf4a*conc_foxa1)
+                                        &  abs(log10(mP_gHill_par_foxa1_k4fh[bc_full_list,]$n))<1)]
+
+mP_final_smallError <- intersect(mP_smallError_list3,intersect(mP_smallError_list2,mP_smallError_list))
+
+both_final_smallError <- intersect(mP_final_smallError,final_smallError)
+#both_final_smallError <- (final_smallError)
+```
+
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F, out.width="33%", warning=F, results='show'}
+
+get_F_EC <- function(x){(x/0.467)^0.5}
+get_H_EC <- function(x){(x*0.467)^0.5}
+getFH_fromF <- function(x){0.467*x^2}
+
+
+```
+
+```{r , eval=TRUE, fig.width=3, fig.height=3.5, dpi=300, echo=FALSE, warning=FALSE, results='show'}
+
+compare_minP_hsp <- function(x,x_error,bar_error,lower=0,upper=0,col="",logxy="xy",portion_cut=0.25,xlab="hsp68",ylab="minP",main="",xlabels=c(1,10,100),xat=c(1,10,100),bc_full_list=union(final_smallError,final_smallError),point_col="#9075ab"){
+  hsp_tmp <- get(x)[,col,drop=FALSE]
+  minP_tmp <- get(paste("mP_",x,sep=""))[,col,drop=FALSE]
+hsp_tmp_error <- get(x_error)[,col,drop=FALSE]
+  minP_tmp_error <- get(paste("mP_",x_error,sep=""))[,col,drop=FALSE]
+  hsp_error_sum <- get(bar_error)[,col,drop=FALSE]
+  minP_error_sum <- get(paste("mP_",bar_error,sep=""))[,col,drop=FALSE]
+
+ # bc_full_list <- union(final_smallError,final_smallError) #union(final_smallError,mP_final_smallError)  # intersect(smallError_list3,mP_smallError_list3) #both_final_smallError
+  plot_list <- bc_full_list[which(hsp_tmp_error[bc_full_list,]>0 & 
+                                  hsp_tmp_error[bc_full_list,]<portion_cut*abs(hsp_tmp[bc_full_list,])&
+                                  minP_tmp_error[bc_full_list,]>0 & 
+                                  minP_tmp_error[bc_full_list,]<portion_cut*abs(minP_tmp[bc_full_list,])&
+                                  hsp_tmp[bc_full_list,] < upper & hsp_tmp[bc_full_list,]>lower &
+                                    minP_tmp[bc_full_list,] < upper & minP_tmp[bc_full_list,]>lower &
+                                  minP_error_sum[bc_full_list,] >0 & minP_error_sum[bc_full_list,] < portion_cut*abs(minP_tmp[bc_full_list,])&
+                                  hsp_error_sum[bc_full_list,] >0 & hsp_error_sum[bc_full_list,] < portion_cut*abs(hsp_tmp[bc_full_list,])
+                                  )]
+  #plot_list <- both_final_smallError
+  x_limits <- extend_plot_limits(c(hsp_tmp[plot_list,],xat),
+                                 log_axis=grepl("x",logxy,fixed=TRUE))
+  y_limits <- extend_plot_limits(c(minP_tmp[plot_list,],xat),
+                                 log_axis=grepl("y",logxy,fixed=TRUE))
+  if(col %in% c("synergy","hepG2synergy")) x_limits[1] <- -1.2
+  plot(hsp_tmp[plot_list,],minP_tmp[plot_list,],log=logxy,type="n",
+       xlim=x_limits,ylim=y_limits,xaxs="i",yaxs="i",
+       axes=FALSE, ann=FALSE)
+  axis(2, at=xat, labels=xlabels, lwd=1, tck=-0.025,
+       col=rgb(0,0,0,0), col.ticks="black", padj=1.7, cex.axis=0.8,
+       gap.axis=-1)
+  axis(1, at=xat, labels=xlabels, lwd=1, tck=-0.025,
+       col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8,
+       gap.axis=-1)
+  title(xlab=xlab, ylab=ylab, main=metric_label(main), line=1.2, cex.lab=0.9)
+  abline(h=xat, col="lightgray", lty=1, lwd=0.75)
+  arrows(hsp_tmp[plot_list,]-hsp_error_sum[plot_list,], minP_tmp[plot_list,], hsp_tmp[plot_list,]+hsp_error_sum[plot_list,], minP_tmp[plot_list,], length=0, angle=90, code=3,col=point_col)
+  arrows(hsp_tmp[plot_list,], minP_tmp[plot_list,]-minP_error_sum[plot_list,], hsp_tmp[plot_list,], minP_tmp[plot_list,]+minP_error_sum[plot_list,], length=0, angle=90, code=3,col=point_col)
+points(hsp_tmp[plot_list,],minP_tmp[plot_list,],pch=21,cex=1,
+       col=point_col,bg=alpha(point_col,0.5))
+draw_diag(alpha_value=1,lwd=1.5,lty=2)
+box()
+
+    if(logxy=="xy"){
+      cor_return <-cor(log(hsp_tmp[plot_list,]),log(minP_tmp[plot_list,]),use="pairwise.complete.obs")
+        t_pvalue <- t.test(log(hsp_tmp[plot_list,]),log(minP_tmp[plot_list,]))$p.value
+  }else{
+      cor_return <- (cor((hsp_tmp[plot_list,]),(minP_tmp[plot_list,]),use="pairwise.complete.obs"))
+        t_pvalue <- t.test(hsp_tmp[plot_list,],minP_tmp[plot_list,])$p.value
+  }
+  legend("topleft", legend=paste0("R=", round(cor_return, 2)), bty="n", cex=0.8)
+  #boxplot(hsp_tmp[plot_list,],minP_tmp[plot_list,],log=logxy)
+    print(paste0(col," R=",cor_return,"    t p=",t_pvalue))
+    #print(paste0())
+  return(cor_return)
+}
+#   compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="fit_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="Kd",lower=min(conc_foxa1*conc_hnf4a),upper=1*max(conc_foxa1*conc_hnf4a))
+# compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="fit_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="n",lower=.1,upper=10)
+# compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="fit_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="regP",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="")
+# compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="fit_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="basal",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="xy")
+# compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="fit_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="Fmax",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="xy")
+# compare_minP_hsp(x="gHill_par_foxa1_k4fh",x_error="gHill_std_foxa1_k4fh",bar_error="gHill_std_foxa1_k4fh",col="synergy",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="")
+
+one_cell_line <- function(name1,name2,name3,synergy=FALSE,lower_,upper_,point_col="#9075ab",
+                          ec50_at=(c(10,25,75)^2),ec50_labels=c(10,25,75)){
+  tmp_cor_df <- data.frame(EC50=NA,nH=NA,Abasal=NA,Amax=NA,regP=NA,synergy=NA,hepG2synergy=NA)
+tmp_cor_df$EC50 <- compare_minP_hsp(x=name1,x_error=name2,bar_error=name3,col="Kd",lower=lower_,upper=upper_,main="EC50",xat=ec50_at,xlabels=ec50_labels,bc_full_list=bc_full_list,portion_cut=0.5,point_col=point_col)
+tmp_cor_df$nH <- compare_minP_hsp(x=name1,x_error=name2,bar_error=name3,col="n",lower=.1,upper=10,logxy="xy",main="nH",xat =c(1,2,4),xlabels = c(1,2,4),bc_full_list = bc_full_list,point_col=point_col)
+tmp_cor_df$regP <- compare_minP_hsp(x=name1,x_error=name2,bar_error=name3,col="regP",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="",main="regP",xat =c(0,4,8),xlabels = c(0,4,8),point_col=point_col)
+tmp_cor_df$Abasal <- compare_minP_hsp(x=name1,x_error=name2,bar_error=name3,col="basal",lower=-Inf,upper=Inf,logxy="xy",main="Abasal",xat =c(0.2,1,5,25,125),xlabels = c(0.2,1,5,25,125),point_col=point_col)
+tmp_cor_df$Amax <- compare_minP_hsp(x=name1,x_error=name2,bar_error=name3,col="Fmax",lower=-Inf,upper=Inf,logxy="xy",main="Amax",xat =c(1,10,100,1000),xlabels = c(1,10,100,1000),point_col=point_col)
+if(synergy){tmp_cor_df$synergy <- compare_minP_hsp(x=name1,x_error=name3,bar_error=name3,col="synergy",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="",main="synergy",xat =c(-3,0,3,6),xlabels = c(-3,0,3,6),point_col=point_col)
+tmp_cor_df$hepG2synergy <- compare_minP_hsp(x=name1,x_error=name3,bar_error=name3,col="hepG2synergy",lower=-Inf,upper=Inf,portion_cut=Inf,logxy="",main="hepG2synergy",xat =c(-3,0,3,6),xlabels = c(-3,0,3,6),point_col=point_col)
+}
+return(tmp_cor_df)
+}
+print("K4FH")
+k4fh_cor <- one_cell_line("gHill_par_foxa1_k4fh","fit_std_foxa1_k4fh","gHill_std_foxa1_k4fh",TRUE,min(conc_foxa1*conc_hnf4a),max(conc_foxa1*conc_hnf4a),point_col="#9075ab")
+print("K1F")
+k1f_cor  <- one_cell_line("gHill_par_foxa1_k1f","fit_std_foxa1_k1f","gHill_std_foxa1_k1f",FALSE,min(conc_foxa1),max(conc_foxa1),point_col="#E86F77",ec50_at=c(20,50,100),ec50_labels=c(20,50,100))
+print("K3H")
+k3h_cor  <- one_cell_line("gHill_par_foxa1_k3h","fit_std_foxa1_k3h","gHill_std_foxa1_k3h",FALSE,min(conc_hnf4a_alone),max(conc_hnf4a_alone),point_col="#4192D9",ec50_at=c(5,10,25),ec50_labels=c(5,10,25))
+```
+
+```{r, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+hepG2_foxa1_conc <- 49.27642992
+hepG2_hnf4a_conc <- 26.53009141
+
+load_biorep_parameters <- function(param_dir){
+  read_condition <- function(condition){
+    lapply(1:3, function(rep_id){
+      read.table(file.path(param_dir, paste0("gHill_lib1_", condition,
+                                             "_trained_par_r", rep_id, ".txt")),
+                 row.names=1, sep="\t", header=TRUE)
+    })
+  }
+
+  rep_par <- list(k1f=read_condition("k1f"),
+                  k3h=read_condition("k3h"),
+                  k4fh=read_condition("k4fh"))
+
+  for(rep_id in 1:3){
+    for(condition in c("k1f", "k3h", "k4fh")){
+      par_here <- rep_par[[condition]][[rep_id]]
+      par_here$regP <- log2(par_here$Fmax/par_here$basal)
+      rep_par[[condition]][[rep_id]] <- par_here
+    }
+
+    k1f <- rep_par$k1f[[rep_id]]
+    k3h <- rep_par$k3h[[rep_id]]
+    k4fh <- rep_par$k4fh[[rep_id]]
+    seq_ids <- Reduce(intersect, list(row.names(k1f), row.names(k3h), row.names(k4fh)))
+
+    predict_log2_over_basal <- function(par_table, concentration){
+      activity <- par_table$basal+
+        (par_table$Fmax-par_table$basal)/
+        (1+(par_table$Kd^par_table$n)/(concentration^par_table$n))
+      log2(activity/par_table$basal)
+    }
+
+    k4fh[seq_ids, "synergy"] <- k4fh[seq_ids, "regP"]-
+      (k1f[seq_ids, "regP"]+k3h[seq_ids, "regP"])
+    k4fh[seq_ids, "hepG2synergy"] <-
+      predict_log2_over_basal(k4fh[seq_ids,], hepG2_foxa1_conc*hepG2_hnf4a_conc)-
+      (predict_log2_over_basal(k1f[seq_ids,], hepG2_foxa1_conc)+
+         predict_log2_over_basal(k3h[seq_ids,], hepG2_hnf4a_conc))
+    k4fh$n <- k4fh$n*2
+    rep_par$k4fh[[rep_id]] <- k4fh
+  }
+
+  list(gHill_par_foxa1_k1f=rep_par$k1f,
+       gHill_par_foxa1_k3h=rep_par$k3h,
+       gHill_par_foxa1_k4fh=rep_par$k4fh)
+}
+
+hsp_biorep_parameters <- load_biorep_parameters(
+  path.expand("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se"))
+mP_biorep_parameters <- load_biorep_parameters(
+  path.expand("~/Dropbox/postdoc/tft_metadata/hill_fit/minP_hessian_se"))
+
+get_parameter_subset <- function(x, x_error, bar_error, col, lower, upper,
+                                 portion_cut, bc_full_list){
+  hsp_tmp <- get(x)[,col,drop=FALSE]
+  minP_tmp <- get(paste0("mP_",x))[,col,drop=FALSE]
+  hsp_tmp_error <- get(x_error)[,col,drop=FALSE]
+  minP_tmp_error <- get(paste0("mP_",x_error))[,col,drop=FALSE]
+  hsp_error_sum <- get(bar_error)[,col,drop=FALSE]
+  minP_error_sum <- get(paste0("mP_",bar_error))[,col,drop=FALSE]
+
+  bc_full_list[which(hsp_tmp_error[bc_full_list,]>0 &
+                       hsp_tmp_error[bc_full_list,]<portion_cut*abs(hsp_tmp[bc_full_list,]) &
+                       minP_tmp_error[bc_full_list,]>0 &
+                       minP_tmp_error[bc_full_list,]<portion_cut*abs(minP_tmp[bc_full_list,]) &
+                       hsp_tmp[bc_full_list,]<upper & hsp_tmp[bc_full_list,]>lower &
+                       minP_tmp[bc_full_list,]<upper & minP_tmp[bc_full_list,]>lower &
+                       minP_error_sum[bc_full_list,]>0 &
+                       minP_error_sum[bc_full_list,]<portion_cut*abs(minP_tmp[bc_full_list,]) &
+                       hsp_error_sum[bc_full_list,]>0 &
+                       hsp_error_sum[bc_full_list,]<portion_cut*abs(hsp_tmp[bc_full_list,]))]
+}
+
+min_pairwise_biorep_R <- function(rep_tables, parameter, seq_ids, use_log){
+  rep_pairs <- combn(1:3, 2)
+  pairwise_R <- apply(rep_pairs, 2, function(pair_ids){
+    rep_x <- rep_tables[[pair_ids[1]]][seq_ids, parameter]
+    rep_y <- rep_tables[[pair_ids[2]]][seq_ids, parameter]
+    if(use_log){
+      rep_x <- log(rep_x)
+      rep_y <- log(rep_y)
+    }
+    suppressWarnings(cor(rep_x, rep_y, use="pairwise.complete.obs"))
+  })
+  pairwise_R <- pairwise_R[is.finite(pairwise_R)]
+  if(length(pairwise_R)==0) return(NA_real_)
+  min(pairwise_R)
+}
+
+calculate_biorep_cor <- function(name1, name2, name3, synergy=FALSE,
+                                 lower_, upper_){
+  result <- data.frame(EC50=rep(NA_real_,2), nH=NA_real_, Abasal=NA_real_,
+                       Amax=NA_real_, regP=NA_real_, synergy=NA_real_,
+                       hepG2synergy=NA_real_, row.names=c("hsp68","minP"))
+
+  add_parameter <- function(result, result_col, parameter, lower, upper,
+                            portion_cut, use_log, x_error=name2,
+                            bar_error=name3,
+                            candidate_ids=union(final_smallError,final_smallError)){
+    seq_ids <- get_parameter_subset(name1, x_error, bar_error, parameter,
+                                    lower, upper, portion_cut, candidate_ids)
+    result["hsp68",result_col] <- min_pairwise_biorep_R(
+      hsp_biorep_parameters[[name1]], parameter, seq_ids, use_log)
+    result["minP",result_col] <- min_pairwise_biorep_R(
+      mP_biorep_parameters[[name1]], parameter, seq_ids, use_log)
+    result
+  }
+
+  result <- add_parameter(result, "EC50", "Kd", lower_, upper_, 0.5, TRUE,
+                          candidate_ids=bc_full_list)
+  result <- add_parameter(result, "nH", "n", 0.1, 10, 0.25, TRUE,
+                          candidate_ids=bc_full_list)
+  result <- add_parameter(result, "regP", "regP", -Inf, Inf, Inf, FALSE)
+  result <- add_parameter(result, "Abasal", "basal", -Inf, Inf, 0.25, TRUE)
+  result <- add_parameter(result, "Amax", "Fmax", -Inf, Inf, 0.25, TRUE)
+  if(synergy){
+    result <- add_parameter(result, "synergy", "synergy", -Inf, Inf, Inf,
+                            FALSE, x_error=name3, bar_error=name3)
+    result <- add_parameter(result, "hepG2synergy", "hepG2synergy", -Inf,
+                            Inf, Inf, FALSE, x_error=name3, bar_error=name3)
+  }
+  minimum_R <- vapply(result, function(values){
+    if(all(is.na(values))) return(NA_real_)
+    min(values, na.rm=TRUE)
+  }, numeric(1))
+  data.frame(as.list(minimum_R), row.names="minimum")
+}
+
+k4fh_rep_cor <- calculate_biorep_cor(
+  "gHill_par_foxa1_k4fh", "fit_std_foxa1_k4fh", "gHill_std_foxa1_k4fh",
+  TRUE, min(conc_foxa1*conc_hnf4a), max(conc_foxa1*conc_hnf4a))
+k1f_rep_cor <- calculate_biorep_cor(
+  "gHill_par_foxa1_k1f", "fit_std_foxa1_k1f", "gHill_std_foxa1_k1f",
+  FALSE, min(conc_foxa1), max(conc_foxa1))
+k3h_rep_cor <- calculate_biorep_cor(
+  "gHill_par_foxa1_k3h", "fit_std_foxa1_k3h", "gHill_std_foxa1_k3h",
+  FALSE, min(conc_hnf4a_alone), max(conc_hnf4a_alone))
+```
+
+```{r, eval=TRUE, fig.width=5, fig.height=4, echo=FALSE, out.width="50%", warning=FALSE, results='show'}
+
+heatmap_cols <- setdiff(colnames(k4fh_cor),"synergy")
+n <- length(heatmap_cols)
+melted_cormat <- data.frame(Var1=c(rep("HNF4A",n),rep("FOXA1",n),rep("F&H",n)),Var2=rep(heatmap_cols,3),value=round(as.numeric(c(k3h_cor[1,heatmap_cols],k1f_cor[1,heatmap_cols],k4fh_cor[1,heatmap_cols])),2))
+  #rbind(k4fh_cor,k1f_cor,k3h_cor)
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson's r") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x=element_text(angle=45, vjust=1, size=9.6, hjust=1),
+       axis.text.y=element_text(angle=0, vjust=0.5, size=9.6, hjust=1))+
+ coord_fixed()+
+  scale_x_discrete(limits=heatmap_cols,
+                   labels=metric_axis_labels(heatmap_cols)) +
+  scale_y_discrete(limits = rev(c("F&H","FOXA1","HNF4A")))
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank())
+
+
+```
+
+```{r, eval=TRUE, fig.width=5, fig.height=4, echo=FALSE, out.width="50%", warning=FALSE, results='show'}
+
+rep_cor_matrix <- rbind(
+  "HNF4A"=k3h_rep_cor["minimum",],
+  "FOXA1"=k1f_rep_cor["minimum",],
+  "F&H"=k4fh_rep_cor["minimum",]
+)
+
+rep_row_order <- c("F&H","FOXA1","HNF4A")
+rep_cor_matrix <- rep_cor_matrix[rep_row_order,,drop=FALSE]
+rep_cor_matrix <- rep_cor_matrix[,setdiff(colnames(rep_cor_matrix),"synergy"),drop=FALSE]
+melted_rep_cormat <- data.frame(
+  Var1=rep(rep_row_order, each=ncol(rep_cor_matrix)),
+  Var2=rep(colnames(rep_cor_matrix), times=nrow(rep_cor_matrix)),
+  value=round(as.numeric(t(rep_cor_matrix)),2)
+)
+
+ggheatmap_rep <- ggplot(melted_rep_cormat, aes(Var2, Var1, fill=value))+
+  geom_tile(color="white")+
+  scale_fill_gradient2(low="blue", high="red", mid="white",
+                       midpoint=0, limit=c(-1,1), space="Lab",
+                       name="Minimum\nPearson's r")+
+  theme_minimal()+
+  theme(axis.text.x=element_text(angle=45, vjust=1, size=9.6, hjust=1),
+        axis.text.y=element_text(angle=0, vjust=0.5, size=9.6, hjust=1))+
+  coord_fixed()+
+  scale_x_discrete(limits=colnames(rep_cor_matrix),
+                   labels=metric_axis_labels(colnames(rep_cor_matrix)))+
+  scale_y_discrete(limits=rev(rep_row_order))
+
+ggheatmap_rep+
+  geom_text(aes(label=value), color="black", size=4)+
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.border=element_blank(),
+        panel.background=element_blank(),
+        axis.ticks=element_blank())
+
+```
+
+```{r, eval=TRUE, fig.width=5, fig.height=4, echo=FALSE, out.width="50%", warning=FALSE, results='show'}
+
+relative_R2_matrix <- rbind(
+  "F&H"=100*(as.numeric(k4fh_cor[1,])^2)/
+    (as.numeric(k4fh_rep_cor["minimum",])^2),
+  "FOXA1"=100*(as.numeric(k1f_cor[1,])^2)/
+    (as.numeric(k1f_rep_cor["minimum",])^2),
+  "HNF4A"=100*(as.numeric(k3h_cor[1,])^2)/
+    (as.numeric(k3h_rep_cor["minimum",])^2)
+)
+colnames(relative_R2_matrix) <- colnames(k4fh_cor)
+relative_R2_matrix <- relative_R2_matrix[,setdiff(colnames(relative_R2_matrix),"synergy"),drop=FALSE]
+
+relative_R2_row_order <- c("F&H","FOXA1","HNF4A")
+melted_relative_R2 <- data.frame(
+  Var1=rep(relative_R2_row_order, each=ncol(relative_R2_matrix)),
+  Var2=rep(colnames(relative_R2_matrix), times=nrow(relative_R2_matrix)),
+  value=round(as.numeric(t(relative_R2_matrix)),1)
+)
+
+ggheatmap_relative_R2 <- ggplot(
+  melted_relative_R2, aes(Var2, Var1, fill=value))+
+  geom_tile(color="white")+
+  scale_fill_gradient(low="white", high="red", na.value="grey90",
+                      name="hsp-minP R² /\nbio rep R² (%)")+
+  theme_minimal()+
+  theme(axis.text.x=element_text(angle=45, vjust=1, size=9.6, hjust=1),
+        axis.text.y=element_text(angle=0, vjust=0.5, size=9.6, hjust=1))+
+  coord_fixed()+
+  scale_x_discrete(limits=colnames(relative_R2_matrix),
+                   labels=metric_axis_labels(colnames(relative_R2_matrix)))+
+  scale_y_discrete(limits=rev(relative_R2_row_order))
+
+ggheatmap_relative_R2+
+  geom_text(aes(label=ifelse(is.na(value),"",paste0(value,"%"))),
+            color="black", size=4)+
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        panel.grid.major=element_blank(),
+        panel.border=element_blank(),
+        panel.background=element_blank(),
+        axis.ticks=element_blank())
+
+```
+
+
+```{r ,  eval=F,fig.width=3.6, fig.height=4,  echo=F, out.width="33%", warning=F, results='show'}
+
+low_error <- bc_full_list[which(gHill_par_foxa1_k4fh$r2 >0.95)]
+
+  plot(gHill_par_foxa1_k4fh[low_error,]$Kd,minP_gHill_par_foxa1_k4fh[low_error,]$Kd,log="xy")
+  plot(gHill_par_foxa1_k4fh[low_error,]$n,minP_gHill_par_foxa1_k4fh[low_error,]$n,log="xy")
+
+    plot(fc_all3[low_error,]$FH,minP_fc_all3[low_error,]$FH,log="")
+    draw_diag()
+
+low_error <- bc_full_list[which(gHill_par_foxa1_k1f$r2 >0.95)]
+
+plot(gHill_par_foxa1_k1f[low_error,]$Kd,minP_gHill_par_foxa1_k1f[low_error,]$Kd,log="xy")
+plot(gHill_par_foxa1_k1f[low_error,]$n,minP_gHill_par_foxa1_k1f[low_error,]$n,log="xy")
+
+plot(fc_all3[low_error,]$F,minP_fc_all3[low_error,]$F,log="")
+draw_diag()
+
+
+low_error <- bc_full_list[which(gHill_par_foxa1_k3h$r2 >0.95)]
+
+plot(gHill_par_foxa1_k3h[low_error,]$Kd,minP_gHill_par_foxa1_k3h[low_error,]$Kd,log="xy")
+plot(gHill_par_foxa1_k3h[low_error,]$n,minP_gHill_par_foxa1_k3h[low_error,]$n,log="xy")
+
+plot(fc_all3[low_error,]$H,minP_fc_all3[low_error,]$H,log="")
+draw_diag()
+
+plot(fc_all3[low_error,]$synergy,minP_fc_all3[low_error,]$synergy,log="")
+draw_diag()
+```

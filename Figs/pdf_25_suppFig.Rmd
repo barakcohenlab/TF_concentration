@@ -1,0 +1,490 @@
+---
+title: "Supplementary CUT&Tag comparisons"
+output:
+  pdf_document: default
+date: "2026-10-12"
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  dpi = 600,
+  dev.args = list(bg = NA)
+)
+
+library(ggplot2)
+library(eulerr)
+
+f_col <- "#E86F77"
+h_col <- "#4192D9"
+fh_col <- "#9075AB"
+identity_col <- adjustcolor("#A6A6A6", alpha.f = 0.85)
+
+read_pileup <- function(path) {
+  x <- read.table(path, sep = "\t", stringsAsFactors = FALSE)
+  if (ncol(x) < 5) {
+    stop("Expected at least five columns in ", path)
+  }
+  if (anyDuplicated(x$V5)) {
+    stop("Peak identifiers are not unique in ", path)
+  }
+  data.frame(pileup = x$V4, row.names = x$V5)
+}
+
+mean_replicates <- function(rep1, rep2) {
+  common <- intersect(row.names(rep1), row.names(rep2))
+  data.frame(
+    pileup = (rep1[common, "pileup"] + rep2[common, "pileup"]) / 2,
+    row.names = common
+  )
+}
+
+prepare_comparison <- function(single_line, dual_line, overlap_peaks) {
+  common <- intersect(row.names(single_line), row.names(dual_line))
+  overlap_peaks <- intersect(common, overlap_peaks)
+
+  # Reproduce 240103_k1f_modeling.R exactly: fit log(y) = log(x) + b
+  # across all positive finite peaks, then divide x by exp(-b).
+  x <- single_line[common, "pileup"]
+  y <- dual_line[common, "pileup"]
+  norm_keep <- is.finite(x) & is.finite(y) & x > 0 & y > 0
+  norm_fit <- lm(log(y[norm_keep]) ~ offset(log(x[norm_keep])))
+  norm_factor <- 1 / exp(unname(coef(norm_fit)[[1]]))
+
+  out <- data.frame(
+    peak = common,
+    single = x / norm_factor,
+    dual = y,
+    overlap = common %in% overlap_peaks,
+    stringsAsFactors = FALSE
+  )
+
+  # Match test_diff() in 240103_k1f_modeling.R: exclude non-positive values
+  # and calculate the ratio without a pseudocount.
+  ratio_keep <- is.finite(out$single) & is.finite(out$dual) &
+    out$single > 0 & out$dual > 0
+  out$log2_fc <- NA_real_
+  out$log2_fc[ratio_keep] <- log2(
+    out$dual[ratio_keep] / out$single[ratio_keep]
+  )
+
+  test_values <- out$log2_fc[out$overlap & is.finite(out$log2_fc)]
+  if (length(test_values) == 0) {
+    stop("No finite overlap-peak fold changes were available for testing")
+  }
+
+  # Fit log2(y) = log2(x) + b to the positive overlap peaks. Fixing the
+  # log-scale slope at one makes 2^b the geometric-mean fold difference and
+  # gives each peak equal influence in proportional rather than absolute units.
+  fit_keep <- out$overlap & is.finite(out$single) & is.finite(out$dual) &
+    out$single > 0 & out$dual > 0
+  fold_fit <- lm(
+    log2(dual) ~ offset(log2(single)),
+    data = out[fit_keep, , drop = FALSE]
+  )
+  log2_fold <- unname(coef(fold_fit)[["(Intercept)"]])
+  fold_change <- 2^log2_fold
+  fold_change_confint <- 2^unname(
+    confint(fold_fit, "(Intercept)", level = 0.95)
+  )
+
+  test <- suppressWarnings(wilcox.test(
+    test_values,
+    mu = 0,
+    alternative = "greater",
+    exact = FALSE,
+    conf.int = TRUE
+  ))
+
+  list(
+    data = out,
+    norm_factor = norm_factor,
+    norm_fit = norm_fit,
+    test = test,
+    fold_fit = fold_fit,
+    log2_fold = log2_fold,
+    fold_change = fold_change,
+    fold_change_confint = fold_change_confint,
+    n_fit = sum(fit_keep),
+    n_overlap = length(test_values),
+    median_fold = 2^median(test_values, na.rm = TRUE),
+    wilcox_fold = if (length(test$estimate)) 2^unname(test$estimate) else NA_real_,
+    fold_confint = if (!is.null(test$conf.int)) 2^test$conf.int else c(NA_real_, NA_real_)
+  )
+}
+
+format_p <- function(p) {
+  if (!is.finite(p)) return("NA")
+  if (p < 2.2e-16) return("<2.2e-16")
+  format.pval(p, digits = 2, eps = 1e-4)
+}
+
+sparse_log_ticks <- function(lim, max_ticks = 4) {
+  tick_exp <- seq(
+    ceiling(log10(lim[1])),
+    floor(log10(lim[2]))
+  )
+
+  if (length(tick_exp) > max_ticks) {
+    keep <- unique(round(seq(1, length(tick_exp), length.out = max_ticks)))
+    tick_exp <- tick_exp[keep]
+  }
+
+  if (length(tick_exp) == 0) {
+    tick_at <- pretty(lim, n = max_ticks)
+    tick_at <- tick_at[tick_at > 0 & tick_at >= lim[1] & tick_at <= lim[2]]
+    return(list(at = tick_at, labels = format(tick_at, trim = TRUE)))
+  }
+
+  list(
+    at = 10^tick_exp,
+    labels = parse(text = paste0("10^", tick_exp))
+  )
+}
+
+plot_binding_comparison <- function(result, xlab, ylab, title,
+                                    base_col, overlap_col = fh_col) {
+  dat <- result$data
+  keep <- is.finite(dat$single) & is.finite(dat$dual) &
+    dat$single > 0 & dat$dual > 0
+  dat <- dat[keep, , drop = FALSE]
+
+  lim <- range(c(dat$single, dat$dual), finite = TRUE)
+  log_lim <- log10(lim)
+  pad <- diff(log_lim) * 0.04
+  if (!is.finite(pad) || pad == 0) pad <- 0.1
+  lim <- 10^(log_lim + c(-pad, pad))
+
+  old_par <- par(
+    mar = c(3.8, 3.8, 2.5, 0.7),
+    mgp = c(1.75, 0.35, 0),
+    tcl = -0.22,
+    las = 1,
+    cex.axis = 0.78,
+    cex.lab = 0.85
+  )
+  on.exit(par(old_par), add = TRUE)
+
+  plot(
+    dat$single, dat$dual,
+    log = "xy",
+    xlim = lim, ylim = lim,
+    pch = 16, cex = 0.75,
+    col = adjustcolor(base_col, alpha.f = 0.28),
+    axes = FALSE,
+    ann = FALSE,
+    asp = 1
+  )
+  lines(lim, lim, col = identity_col, lwd = 1.2, lty = 5)
+  fit_x <- range(dat$single[dat$overlap], finite = TRUE)
+  points(
+    dat$single[dat$overlap], dat$dual[dat$overlap],
+    pch = 16, cex = 0.75,
+    col = "white"
+  )
+  points(
+    dat$single[dat$overlap], dat$dual[dat$overlap],
+    pch = 16, cex = 0.75,
+    col = adjustcolor(overlap_col, alpha.f = 0.5)
+  )
+  lines(
+    fit_x, result$fold_change * fit_x,
+    col = adjustcolor(overlap_col, alpha.f = 0.9),
+    lwd = 1.3
+  )
+  major_ticks <- sparse_log_ticks(lim, max_ticks = 4)
+  axis(1, at = major_ticks$at, labels = major_ticks$labels,
+       lwd = 0, lwd.ticks = 0.7)
+  axis(2, at = major_ticks$at, labels = major_ticks$labels,
+       lwd = 0, lwd.ticks = 0.7)
+  box(lwd = 0.8)
+  title(xlab = xlab, ylab = ylab, line = 1.75, cex.lab = 0.85)
+  title(main = title, line = 0.65, cex.main = 0.9, font.main = 1)
+
+  lx <- log10(lim)
+  label_x <- 10^(lx[1] + 0.04 * diff(lx))
+  label_y <- 10^(lx[2] - 0.04 * diff(lx))
+  label <- sprintf("y = %.2fx", result$fold_change)
+  text(label_x, label_y, labels = label, adj = c(0, 1), cex = 0.67)
+}
+
+```
+
+## Load CUT&Tag data
+
+```{r load-data, include=FALSE}
+dual_dir <- "~/mnt/scratch/jeffCutTag_process/0d5_k4fh"
+cuttag_dir <- "~/mnt/scratch/cutTagModel"
+
+# FOXA1 in the F-H-inducible line
+foxa1_k4fh_r1_0d5 <- read_pileup(file.path(
+  dual_dir,
+  "foxa1-ab-plusdox-r1_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_foxa1_1e-5_peaks.txt"
+))
+foxa1_k4fh_r2_0d5 <- read_pileup(file.path(
+  dual_dir,
+  "foxa1-ab-plusdox-r2_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_foxa1_1e-5_peaks.txt"
+))
+foxa1_k4fh_0d5_mean <- mean_replicates(
+  foxa1_k4fh_r1_0d5,
+  foxa1_k4fh_r2_0d5
+)
+
+# FOXA1 in the F-inducible line
+foxa1_k1f_0d5_r1 <- read_pileup(file.path(
+  cuttag_dir,
+  "pileups/r1_foxa1_0d5_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_foxa1_1e-5_peaks.txt"
+))
+foxa1_k1f_0d5_r2 <- read_pileup(file.path(
+  cuttag_dir,
+  "pileups/r2_foxa1_0d5_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_foxa1_1e-5_peaks.txt"
+))
+foxa1_k1f_0d5_mean <- mean_replicates(
+  foxa1_k1f_0d5_r1,
+  foxa1_k1f_0d5_r2
+)
+
+fh_overlap_foxa1 <- read.table(
+  file.path(
+    cuttag_dir,
+    "pileups/fh_overlap_new_merged_idr_all6conc_foxa1_1e-5_peaks.txt"
+  ),
+  sep = "\t",
+  stringsAsFactors = FALSE
+)$V1
+
+# HNF4A in the F-H-inducible line
+hnf4a_k4fh_r1_0d5 <- read_pileup(file.path(
+  dual_dir,
+  "hnf4a-ab-plusdox-r1_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_hnf4a_1e-5_peaks.txt"
+))
+hnf4a_k4fh_r2_0d5 <- read_pileup(file.path(
+  dual_dir,
+  "hnf4a-ab-plusdox-r2_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_hnf4a_1e-5_peaks.txt"
+))
+hnf4a_k4fh_0d5_mean <- mean_replicates(
+  hnf4a_k4fh_r1_0d5,
+  hnf4a_k4fh_r2_0d5
+)
+
+# HNF4A in the H-inducible line
+hnf4a_k3h_0d5_r1 <- read_pileup(file.path(
+  cuttag_dir,
+  "hnf4a_pileups/r1_hnf4a_0d5_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_hnf4a_1e-5_peaks.txt"
+))
+hnf4a_k3h_0d5_r2 <- read_pileup(file.path(
+  cuttag_dir,
+  "hnf4a_pileups/r2_hnf4a_0d5_filtered_allReadsCount_pileups.usingWholePk_f0.for.new_merged_idr_all6conc_hnf4a_1e-5_peaks.txt"
+))
+hnf4a_k3h_0d5_mean <- mean_replicates(
+  hnf4a_k3h_0d5_r1,
+  hnf4a_k3h_0d5_r2
+)
+
+fh_overlap_hnf4a <- read.table(
+  file.path(
+    cuttag_dir,
+    "hnf4a_pileups/fh_overlap_new_merged_idr_all6conc_hnf4a_1e-5_peaks.txt"
+  ),
+  sep = "\t",
+  stringsAsFactors = FALSE
+)$V1
+
+foxa1_result <- prepare_comparison(
+  foxa1_k1f_0d5_mean,
+  foxa1_k4fh_0d5_mean,
+  fh_overlap_foxa1
+)
+
+hnf4a_result <- prepare_comparison(
+  hnf4a_k3h_0d5_mean,
+  hnf4a_k4fh_0d5_mean,
+  fh_overlap_hnf4a
+)
+```
+
+## Single-factor versus F-H-inducible cell lines
+
+Highlighted points are peaks in the FOXA1--HNF4A overlap lists. The dashed line
+is the identity line. The colored line is obtained by fitting
+$\log_2(y)=\log_2(x)+b$ to the positive highlighted peaks, and $2^b$ is reported
+as the fold difference. Single-factor signals are scaled to the total signal
+in the corresponding F-H-inducible dataset before plotting.
+
+```{r binding-scatter, fig.width=6., fig.height=3.15, fig.align='center'}
+par(mfrow = c(1, 2))
+
+plot_binding_comparison(
+  foxa1_result,
+  xlab = "iFOXA1",
+  ylab = "iFH",
+  title = "FOXA1 binding signal [a.u.]",
+  base_col = f_col,
+  overlap_col = fh_col
+)
+
+plot_binding_comparison(
+  hnf4a_result,
+  xlab = "iHNF4A",
+  ylab = "iFH",
+  title = "HNF4A binding signal [a.u.]",
+  base_col = h_col,
+  overlap_col = fh_col
+)
+```
+
+```{r peak-color-legend, fig.width=5.4, fig.height=0.65, fig.align='center'}
+par(mar = c(0, 0, 0, 0))
+plot.new()
+legend(
+  "center",
+  legend = c("FOXA1 peak", "HNF4A peak", "Overlapping FH peak"),
+  pch = 16,
+  col = c(f_col, h_col, fh_col),
+  pt.cex = 0.9,
+  cex = 0.78,
+  bty = "n",
+  horiz = TRUE,
+  xpd = NA
+)
+```
+
+## FOXA1 and HNF4A peak overlap
+
+The Euler diagram follows the style used in Figure 1. Circle areas and labels
+show peak-set sizes, with translucent FOXA1 and HNF4A fills producing a
+purple-shaded overlap. If the two reciprocal overlap lists differ in length,
+the smaller count is used as a conservative shared intersection.
+
+```{r peak-overlap-venn, fig.width=3, fig.height=2.2, fig.align='center'}
+foxa1_peak_set <- unique(row.names(foxa1_k1f_0d5_mean))
+hnf4a_peak_set <- unique(row.names(hnf4a_k3h_0d5_mean))
+foxa1_overlap_set <- intersect(foxa1_peak_set, unique(fh_overlap_foxa1))
+hnf4a_overlap_set <- intersect(hnf4a_peak_set, unique(fh_overlap_hnf4a))
+
+n_f_overlap <- length(foxa1_overlap_set)
+n_h_overlap <- length(hnf4a_overlap_set)
+overlap_n <- min(n_f_overlap, n_h_overlap)
+
+if (n_f_overlap != n_h_overlap) {
+  warning(
+    "Reciprocal overlap counts differ (FOXA1 = ", n_f_overlap,
+    ", HNF4A = ", n_h_overlap,
+    "); using the smaller count in the Euler diagram."
+  )
+}
+
+peak_overlap_counts <- c(
+  "FOXA1" = length(foxa1_peak_set) - overlap_n,
+  "HNF4A" = length(hnf4a_peak_set) - overlap_n,
+  "FOXA1&HNF4A" = overlap_n
+)
+
+peak_overlap_fit <- euler(peak_overlap_counts)
+plot(
+  peak_overlap_fit,
+  labels = list(
+    labels = c("FOXA1 peak", "HNF4A peak"),
+    font = 1,
+    cex = 0.9
+  ),
+  quantities = list(
+    labels = c(
+      as.character(peak_overlap_counts[["FOXA1"]]),
+      as.character(peak_overlap_counts[["HNF4A"]]),
+      paste0("Overlapping\npeak\n", peak_overlap_counts[["FOXA1&HNF4A"]])
+    ),
+    font = 1,
+    cex = 0.9
+  ),
+  fills = list(fill = c(f_col, h_col), alpha = 0.38),
+  edges = list(col = c(f_col, h_col), lwd = 4)
+)
+```
+
+## Fold-change distributions at overlap peaks
+
+The one-sided paired Wilcoxon signed-rank test is performed on per-peak
+$\log_2(\mathrm{F\mbox{-}H}/\mathrm{single\ factor})$ values. Testing on the
+log scale makes the comparison proportional rather than dependent on absolute
+signal differences across the wide CUT&Tag dynamic range.
+
+```{r overlap-fold-change, fig.width=3.2, fig.height=3.1, fig.align='center'}
+fc_df <- rbind(
+  data.frame(
+    factor = "FOXA1",
+    log2_fc = foxa1_result$data$log2_fc[foxa1_result$data$overlap]
+  ),
+  data.frame(
+    factor = "HNF4A",
+    log2_fc = hnf4a_result$data$log2_fc[hnf4a_result$data$overlap]
+  )
+)
+fc_df <- fc_df[is.finite(fc_df$log2_fc), , drop = FALSE]
+fc_df$factor <- factor(fc_df$factor, levels = c("FOXA1", "HNF4A"))
+
+set.seed(1)
+boxplot(
+  log2_fc ~ factor,
+  data = fc_df,
+  col = c(adjustcolor(f_col, alpha.f = 0.35),
+          adjustcolor(h_col, alpha.f = 0.35)),
+  border = c(f_col, h_col),
+  outline = FALSE,
+  boxwex = 0.42,
+  staplewex = 0,
+  axes = FALSE,
+  ann = FALSE
+)
+stripchart(
+  log2_fc ~ factor,
+  data = fc_df,
+  vertical = TRUE,
+  method = "jitter",
+  jitter = 0.14,
+  add = TRUE,
+  pch = 16,
+  cex = 0.38,
+  col = c(adjustcolor(f_col, alpha.f = 0.5),
+          adjustcolor(h_col, alpha.f = 0.5))
+)
+abline(h = 0, lty = 5, lwd = 1, col = identity_col)
+axis(1, at = 1:2, labels = c("FOXA1", "HNF4A"),
+     lwd = 0, lwd.ticks = 0.7, cex.axis = 0.8)
+axis(2, lwd = 0, lwd.ticks = 0.7, las = 1, cex.axis = 0.8)
+box(lwd = 0.8)
+title(
+  ylab = expression(log[2]("F-H line"/"single-factor line")),
+  line = 2.2,
+  cex.lab = 0.85
+)
+```
+
+## Statistical summary
+
+```{r statistical-summary, results='asis'}
+summary_table <- data.frame(
+  Factor = c("FOXA1", "HNF4A"),
+  `Positive overlap peaks in fit (n)` = c(foxa1_result$n_fit,
+                                           hnf4a_result$n_fit),
+  `Log-scale regression fold (2^b)` = round(
+    c(foxa1_result$fold_change, hnf4a_result$fold_change),
+    2
+  ),
+  `Fold 95% CI` = c(
+    sprintf("%.2f--%.2f", foxa1_result$fold_change_confint[1],
+            foxa1_result$fold_change_confint[2]),
+    sprintf("%.2f--%.2f", hnf4a_result$fold_change_confint[1],
+            hnf4a_result$fold_change_confint[2])
+  ),
+  `One-sided paired Wilcoxon P` = c(
+    format_p(foxa1_result$test$p.value),
+    format_p(hnf4a_result$test$p.value)
+  ),
+  check.names = FALSE
+)
+
+knitr::kable(summary_table, booktabs = TRUE, align = "lrrrr")
+```

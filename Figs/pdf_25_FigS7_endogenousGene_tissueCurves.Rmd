@@ -1,0 +1,343 @@
+---
+title: "Endogenous gene-expression curves by tissue"
+output:
+  pdf_document: default
+date: '2026-10-08'
+---
+
+```{r setup, echo=FALSE, message=FALSE, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  tidy.opts = list(width.cutoff = 60),
+  tidy = TRUE,
+  dpi = 600,
+  dev.args = list(bg = NA)
+)
+knitr::opts_knit$set(
+  root.dir = "/Users/eve/Dropbox/tmp_work/RNA_counts/new_norm/"
+)
+
+library(scales)
+```
+
+```{r load-expression-and-parameters, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+rna_input_dir <- "/Users/eve/Dropbox/tmp_work/RNA_counts/new_norm"
+
+dose_columns <- list(
+  k1f = c("r3_O1", "r3_O1d5", "r3_O2", "r3_O2d5",
+          "r3_O3", "r3_O3d5", "r3_O4", "r3_O5"),
+  k3h = c("r3_N1", "r3_N1d5", "r3_N2", "r3_N2d5",
+          "r3_N3", "r3_N3d5", "r3_N4", "r3_N5"),
+  k4fh = c("r3_S1", "r3_S1d5", "r3_S2", "r3_S2d5",
+           "r3_S3", "r3_S3d5", "r3_S4", "r3_S5")
+)
+reporter_order_names <- c(
+  "s5", "s4", "s3d5", "s3", "s2d5", "s2", "s1d5", "s1"
+)
+
+read_endogenous_matrix <- function(condition, statistic = c("mean", "SE")) {
+  statistic <- match.arg(statistic)
+  filename <- paste0(
+    if (statistic == "mean") "mean_" else "SE_",
+    condition,
+    "_external_norm_RPK.txt"
+  )
+  input <- read.table(
+    file.path(rna_input_dir, filename),
+    header = TRUE,
+    sep = "\t",
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+
+  required_columns <- c(dose_columns[[condition]], "gene", "id")
+  missing_columns <- setdiff(required_columns, names(input))
+  if (length(missing_columns) > 0) {
+    stop(filename, " is missing columns: ",
+         paste(missing_columns, collapse = ", "))
+  }
+
+  missing_id <- is.na(input$id) | input$id == ""
+  input$id[missing_id] <- paste0("symbol:", input$gene[missing_id])
+  if (anyDuplicated(input$id)) {
+    stop(filename, " contains duplicated gene IDs")
+  }
+
+  expression <- input[, rev(dose_columns[[condition]]), drop = FALSE]
+  # Match the source notebook: add one pseudocount to mean expression only.
+  if (statistic == "mean") {
+    expression <- expression + 1
+  }
+  names(expression) <- reporter_order_names
+  row.names(expression) <- input$id
+  expression
+}
+
+f_mean <- read_endogenous_matrix("k1f", "mean")
+f_se <- read_endogenous_matrix("k1f", "SE")
+h_mean <- read_endogenous_matrix("k3h", "mean")
+h_se <- read_endogenous_matrix("k3h", "SE")
+fh_mean <- read_endogenous_matrix("k4fh", "mean")
+fh_se <- read_endogenous_matrix("k4fh", "SE")
+
+bc_full_list <- Reduce(
+  intersect,
+  list(
+    row.names(f_mean), row.names(f_se),
+    row.names(h_mean), row.names(h_se),
+    row.names(fh_mean), row.names(fh_se)
+  )
+)
+f_hsp_matrix_3rMean <- f_mean[bc_full_list, , drop = FALSE]
+h_hsp_matrix_3rMean <- h_mean[bc_full_list, , drop = FALSE]
+fh_hsp_matrix_3rMean <- fh_mean[bc_full_list, , drop = FALSE]
+
+gHill_par_foxa1_k4fh <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_par.txt",
+  row.names = 1, sep = "\t", header = TRUE
+)
+gHill_par_foxa1_k1f <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k1f_trained_par.txt",
+  row.names = 1, sep = "\t", header = TRUE
+)
+gHill_par_foxa1_k3h <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k3h_trained_par.txt",
+  row.names = 1, sep = "\t", header = TRUE
+)
+
+conc_foxa1 <- c(
+  1.14511152, 1.870470303, 4.202731758, 12.55323512,
+  32.15738598, 58.73244109, 112.9926126, 159.465
+)
+conc_hnf4a_alone <- c(
+  0.2986401, 0.4620007, 0.6853293, 1.7249063,
+  7.1600411, 13.8676874, 31.4189434, 47.4772956
+)
+conc_hnf4a <- c(
+  0.8451956, 0.9524978, 1.6224574, 3.6032417,
+  4.9132993, 13.2519468, 45.1346589, 87.2914195
+)
+fxh_con <- conc_foxa1 * conc_hnf4a
+
+h_c_labels <- c(1, 4, 13, 87)
+h_c_labels2 <- c(0.5, 2, 14, 48)
+f_c_labels <- c(2, 13, 59, 160)
+fh_labels <- conc_foxa1[c(2, 4, 6, 8)] * conc_hnf4a[c(2, 4, 6, 8)]
+
+tissue_dir <- path.expand(
+  "~/mnt/scratch/endo_pred/tissue_splitted/only_enriched"
+)
+tissue_files <- list.files(
+  tissue_dir,
+  pattern = "\\.tsv$",
+  full.names = TRUE
+)
+if (length(tissue_files) == 0) {
+  stop("No tissue TSV files found in ", tissue_dir)
+}
+
+unversioned_gene_ids <- sub("\\.[0-9]+$", "", bc_full_list)
+curve_ylim <- c(1, max(fh_hsp_matrix_3rMean$s1, na.rm = TRUE))
+```
+
+```{r curve-functions, echo=FALSE, include=FALSE}
+set_canvas <- function(x, xlab, xat, xlabels = "", ylim = c(1, 10000),
+                       cex_lab = 1, ylab = "Gene expression (nRPK)") {
+  plot(
+    x, (seq_along(x) - 0.995) * 36,
+    log = "xy", pch = 16, cex = 0, col = "white",
+    axes = FALSE, ann = FALSE, ylim = ylim
+  )
+  axis(
+    2,
+    at = c(1, 100, 10000, 1000000),
+    labels = expression(10^0, 10^2, 10^4, 10^6),
+    lwd = 1, tck = -0.02, col = rgb(0, 0, 0, 0),
+    col.ticks = "black", padj = 1.3, cex.axis = 0.8
+  )
+  axis(
+    1, at = xat, labels = xlabels,
+    lwd = 1, tck = -0.02, col = rgb(0, 0, 0, 0),
+    col.ticks = "black", padj = -2, cex.axis = 0.8
+  )
+  title(
+    ylab = ylab,
+    xlab = xlab,
+    line = 1.2,
+    cex.lab = cex_lab
+  )
+  box()
+}
+
+add_top_axis <- function() {
+  axis(
+    3, at = fh_labels, labels = h_c_labels,
+    lwd = 1, tck = -0.02, col = rgb(0, 0, 0, 0),
+    col.ticks = "black", padj = 1.78, cex.axis = 0.8
+  )
+}
+
+get_tissue_indices <- function(tissue_file, fitted_genes) {
+  tissue_table <- read.delim(
+    tissue_file,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+  which(
+    unversioned_gene_ids %in% unique(tissue_table$Ensembl) &
+      bc_full_list %in% fitted_genes
+  )
+}
+
+tissue_title <- function(tissue_file, n) {
+  tissue_name <- sub("\\.tsv$", "", basename(tissue_file))
+  tissue_name <- gsub("_", " ", tissue_name)
+  tissue_name <- paste0(
+    toupper(substr(tissue_name, 1, 1)),
+    substr(tissue_name, 2, nchar(tissue_name))
+  )
+  title(
+    main = paste0(tissue_name, " (n=", n, ")"),
+    cex.main = 0.9,
+    font.main = 1
+  )
+}
+```
+
+```{r prepare-curve-colors, echo=FALSE, include=FALSE}
+tissue_n <- vapply(
+  tissue_files,
+  function(tissue_file) {
+    length(get_tissue_indices(
+      tissue_file,
+      row.names(gHill_par_foxa1_k4fh)
+    ))
+  },
+  numeric(1)
+)
+keep_tissue <- tissue_n > 0
+tissue_files <- tissue_files[keep_tissue]
+tissue_n <- tissue_n[keep_tissue]
+tissue_order <- order(-tissue_n, basename(tissue_files))
+tissue_files <- tissue_files[tissue_order]
+tissue_n <- tissue_n[tissue_order]
+
+make_curve_colors <- function(fold_change, palette, cutoff = 1.5) {
+  colors <- rep(NA_character_, length(fold_change))
+  colors[fold_change <= cutoff] <- "#C5C5C5"
+  above_cutoff <- which(fold_change > cutoff)
+  colors[above_cutoff] <- colorRampPalette(palette)(length(above_cutoff))[
+    rank(fold_change[above_cutoff])
+  ]
+  colors
+}
+
+fold_change_1 <- f_hsp_matrix_3rMean$s1 / f_hsp_matrix_3rMean$s5
+sort_metric_1 <- abs(fold_change_1 - 1.9) * 1.2 -
+  abs(f_hsp_matrix_3rMean$s1 - 2.5) +
+  (f_hsp_matrix_3rMean$s5 + f_hsp_matrix_3rMean$s4) / 1.2
+sort_metric_1[!bc_full_list %in% row.names(gHill_par_foxa1_k1f)] <- NA_real_
+all_colors_1 <- make_curve_colors(
+  fold_change_1,
+  c("#FBE9E9", "#F5C6C9", "#E86F77")
+)
+
+fold_change_3 <- h_hsp_matrix_3rMean$s1 / h_hsp_matrix_3rMean$s5
+sort_metric_3 <- abs(fold_change_3 - 1.9) * 1.1 -
+  abs(h_hsp_matrix_3rMean$s1 - 1.9) +
+  h_hsp_matrix_3rMean$s5 + h_hsp_matrix_3rMean$s4
+sort_metric_3[!bc_full_list %in% row.names(gHill_par_foxa1_k3h)] <- NA_real_
+all_colors_3 <- make_curve_colors(
+  fold_change_3,
+  c("#D2E4F6", "#A2C9ED", "#4192D9")
+)
+
+fold_change_4 <- fh_hsp_matrix_3rMean$s1 / fh_hsp_matrix_3rMean$s5
+sort_metric_4 <- -abs(fold_change_4)
+sort_metric_4[!bc_full_list %in% row.names(gHill_par_foxa1_k4fh)] <- NA_real_
+all_colors_4 <- make_curve_colors(
+  fold_change_4,
+  c("#E4DEEA", "#C9BCD6", "#9075ab")
+)
+
+draw_tissue_curves <- function(
+    tissue_file, expression_matrix, fitted_genes, sort_metric, colors,
+    concentration, xlab, xat, xlabels, top_axis = FALSE,
+    show_ylab = FALSE) {
+  tissue_indices <- get_tissue_indices(tissue_file, fitted_genes)
+
+  set_canvas(
+    x = concentration,
+    xlab = xlab,
+    xat = xat,
+    xlabels = xlabels,
+    ylim = curve_ylim,
+    cex_lab = 0.9,
+    ylab = if (show_ylab) "Gene expression (nRPK)" else ""
+  )
+  if (top_axis) add_top_axis()
+  tissue_title(tissue_file, length(tissue_indices))
+
+  tissue_plot_order <- intersect(
+    order(sort_metric, decreasing = TRUE, na.last = NA),
+    tissue_indices
+  )
+  for (i in tissue_plot_order) {
+    lines(concentration, expression_matrix[i, ], col = "white", lwd = 1.5)
+    lines(
+      concentration, expression_matrix[i, ],
+      col = alpha(colors[i], 1), lwd = 1
+    )
+  }
+}
+```
+
+```{r tissue-curves-1-3-4, eval=TRUE, fig.width=8.7, fig.height=4, out.width='100%', echo=FALSE, dpi=600, warning=FALSE, results='show'}
+par(
+  mfrow = c(1, 3),
+  mar = c(5.1, 4.1, 4.1, 2.1)
+)
+# A three-column mfrow layout automatically reduces base R's cex to 0.66.
+# Reset it so text sizes match the original single-panel plots.
+par(cex = 1, mex = 1)
+
+for (tissue_file in tissue_files) {
+  draw_tissue_curves(
+    tissue_file = tissue_file,
+    expression_matrix = f_hsp_matrix_3rMean,
+    fitted_genes = row.names(gHill_par_foxa1_k1f),
+    sort_metric = sort_metric_1,
+    colors = all_colors_1,
+    concentration = conc_foxa1,
+    xlab = "[FOXA1] (nM)",
+    xat = f_c_labels,
+    xlabels = f_c_labels,
+    show_ylab = TRUE
+  )
+
+  draw_tissue_curves(
+    tissue_file = tissue_file,
+    expression_matrix = h_hsp_matrix_3rMean,
+    fitted_genes = row.names(gHill_par_foxa1_k3h),
+    sort_metric = sort_metric_3,
+    colors = all_colors_3,
+    concentration = conc_hnf4a_alone,
+    xlab = "[HNF4A] (nM)",
+    xat = h_c_labels2,
+    xlabels = h_c_labels2
+  )
+
+  draw_tissue_curves(
+    tissue_file = tissue_file,
+    expression_matrix = fh_hsp_matrix_3rMean,
+    fitted_genes = row.names(gHill_par_foxa1_k4fh),
+    sort_metric = sort_metric_4,
+    colors = all_colors_4,
+    concentration = fxh_con,
+    xlab = "[FOXA1] (nM)",
+    xat = fh_labels,
+    xlabels = f_c_labels,
+    top_axis = TRUE
+  )
+}
+```

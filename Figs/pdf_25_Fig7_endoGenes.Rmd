@@ -1,0 +1,3473 @@
+---
+title: "rnaseq_hill"
+output: pdf_document
+date: '2025-09-14'
+---
+
+```{r setup, echo=FALSE, message=F,include=F}
+knitr::opts_chunk$set(message=FALSE, tidy.opts=list(width.cutoff=60), tidy=TRUE) 
+knitr::opts_knit$set(root.dir = '~/Dropbox/postdoc/tft_metadata/hill_fit/')
+#knitr::include_graphics()
+library(ggplot2)
+library(ggpmisc)
+library(gplots)
+library(plotrix)
+library(pheatmap)
+library(viridis)
+library(reshape2)
+
+library(minpack.lm)
+draw_diag <- function(){
+  lines(c(10^(-10),10^10),c(10^(-10),10^10), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+}
+par(bg=NA)
+reverse_string  <- function(x){
+        sapply(lapply(strsplit(x, NULL), rev), paste, collapse="")}
+```
+
+### tissue-specific K4FH fold change
+
+```{r tissue-k4fh-fc-load, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+tissue_fc_dir <- path.expand(
+  "~/mnt/scratch/endo_pred/tissue_splitted/only_enriched"
+)
+tissue_fc_count_file <-
+  "/Users/eve/Dropbox/tmp_work/RNA_counts/new_norm/mean_k4fh_external_norm_RPK.txt"
+tissue_k1f_count_file <-
+  "/Users/eve/Dropbox/tmp_work/RNA_counts/new_norm/mean_k1f_external_norm_RPK.txt"
+tissue_k3h_count_file <-
+  "/Users/eve/Dropbox/tmp_work/RNA_counts/new_norm/mean_k3h_external_norm_RPK.txt"
+tissue_fc_meta_endoderm_file <- file.path(
+  tissue_fc_dir, "meta_endoderm_fileList.txt"
+)
+
+tissue_fc_counts <- read.table(
+  tissue_fc_count_file, header = TRUE, sep = "\t", check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+tissue_fc_by_ensembl <- setNames(
+  (tissue_fc_counts$r3_S1+1)/(tissue_fc_counts$r3_S5+1),
+  sub("\\..*$", "", tissue_fc_counts$id)
+)
+tissue_k1f_counts <- read.table(
+  tissue_k1f_count_file, header = TRUE, sep = "\t", check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+tissue_k1f_fc_by_ensembl <- setNames(
+  (tissue_k1f_counts$r3_O1+1)/(tissue_k1f_counts$r3_O5+1),
+  sub("\\..*$", "", tissue_k1f_counts$id)
+)
+tissue_k3h_counts <- read.table(
+  tissue_k3h_count_file, header = TRUE, sep = "\t", check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+tissue_k3h_fc_by_ensembl <- setNames(
+  (tissue_k3h_counts$r3_N1+1)/(tissue_k3h_counts$r3_N5+1),
+  sub("\\..*$", "", tissue_k3h_counts$id)
+)
+
+tissue_fc_files <- list.files(
+  tissue_fc_dir, pattern = "\\.tsv$", full.names = TRUE
+)
+tissue_fc_names <- gsub(
+  "_", " ", tools::file_path_sans_ext(basename(tissue_fc_files)),
+  fixed = TRUE
+)
+tissue_fc_names <- sub(" 1$", "", tissue_fc_names)
+tissue_fc_endoderm_names <- gsub(
+  "_", " ",
+  tools::file_path_sans_ext(basename(
+    readLines(tissue_fc_meta_endoderm_file, warn = FALSE)
+  )),
+  fixed = TRUE
+)
+tissue_fc_endoderm_names <- sub(" 1$", "", tissue_fc_endoderm_names)
+tissue_fc_gene_lists <- lapply(tissue_fc_files, function(path) {
+  read.table(
+    path, header = TRUE, sep = "\t", check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+})
+
+prepare_tissue_fc_plot_data <- function(fc_by_ensembl) {
+  fc_data <- do.call(rbind, Map(function(tissue_genes, tissue_name) {
+    tissue_gene_ids <- as.character(tissue_genes$Ensembl)
+    tissue_values <- unname(fc_by_ensembl[tissue_gene_ids])
+    data.frame(
+      tissue = rep(tissue_name, length(tissue_values)),
+      gene = tissue_gene_ids,
+      expression_fc = as.numeric(tissue_values),
+      endoderm = rep(
+        tissue_name %in% tissue_fc_endoderm_names,
+        length(tissue_values)
+      ),
+      stringsAsFactors = FALSE
+    )
+  }, tissue_fc_gene_lists, tissue_fc_names))
+  fc_data <- fc_data[
+    is.finite(fc_data$expression_fc) & fc_data$expression_fc > 0,
+  ]
+  fc_universe <- fc_by_ensembl[
+    is.finite(fc_by_ensembl) & fc_by_ensembl > 0
+  ]
+  fc_universe <- fc_universe[!duplicated(names(fc_universe))]
+  test_tissues <- unique(fc_data$tissue)
+  tissue_p_values <- vapply(test_tissues, function(tissue_name) {
+    tissue_gene_ids <- intersect(
+      unique(fc_data$gene[fc_data$tissue == tissue_name]),
+      names(fc_universe)
+    )
+    tissue_values <- unname(fc_universe[tissue_gene_ids])
+    rest_values <- unname(fc_universe[
+      setdiff(names(fc_universe), tissue_gene_ids)
+    ])
+    if (length(tissue_values) < 2 || length(rest_values) < 2) {
+      return(NA_real_)
+    }
+    suppressWarnings(
+      wilcox.test(tissue_values, rest_values, exact = FALSE)$p.value
+    )
+  }, numeric(1))
+  tissue_median_difference <- vapply(test_tissues, function(tissue_name) {
+    tissue_gene_ids <- intersect(
+      unique(fc_data$gene[fc_data$tissue == tissue_name]),
+      names(fc_universe)
+    )
+    tissue_values <- unname(fc_universe[tissue_gene_ids])
+    rest_values <- unname(fc_universe[
+      setdiff(names(fc_universe), tissue_gene_ids)
+    ])
+    median(tissue_values)-median(rest_values)
+  }, numeric(1))
+  tissue_adjusted_p <- p.adjust(tissue_p_values, method = "BH")
+  tissue_significance_stars <- ifelse(
+    is.na(tissue_adjusted_p), "",
+    ifelse(
+      tissue_adjusted_p < 0.001, "***",
+      ifelse(
+        tissue_adjusted_p < 0.01, "**",
+        ifelse(tissue_adjusted_p < 0.05, "*", "")
+      )
+    )
+  )
+  tissue_significance <- ifelse(
+    tissue_significance_stars == "",
+    "phantom()",
+    paste0(
+      "phantom() ",
+      ifelse(tissue_median_difference > 0, "%up%", "%down%"),
+      " '", tissue_significance_stars, "'"
+    )
+  )
+  fc_test_results <- data.frame(
+    tissue = test_tissues,
+    adjusted_p = tissue_adjusted_p,
+    median_difference = tissue_median_difference,
+    significance = tissue_significance,
+    stringsAsFactors = FALSE
+  )
+  fc_data$group <- factor(
+    ifelse(
+      fc_data$endoderm,
+      "Endoderm tissue enriched genes",
+      "Other tissue enriched genes"
+    ),
+    levels = c(
+      "Endoderm tissue enriched genes",
+      "Other tissue enriched genes"
+    )
+  )
+
+  fc_median <- tapply(
+    log10(fc_data$expression_fc), fc_data$tissue, median, na.rm = TRUE
+  )
+  fc_order <- names(fc_median)[order(-fc_median)]
+  fc_tissue_n <- table(fc_data$tissue)
+  fc_low_n_tissues <- names(fc_tissue_n)[fc_tissue_n <= 10]
+  fc_order <- c(
+    setdiff(fc_order, fc_low_n_tissues),
+    intersect(fc_order, fc_low_n_tissues)
+  )
+  fc_order <- c(
+    setdiff(fc_order, "adipose tissue"),
+    intersect("adipose tissue", fc_order)
+  )
+  fc_data$tissue <- factor(fc_data$tissue, levels = fc_order)
+  fc_n <- table(fc_data$tissue)
+  fc_multi <- fc_data[
+    fc_n[as.character(fc_data$tissue)] >= 2,
+  ]
+  fc_single <- fc_data[
+    fc_n[as.character(fc_data$tissue)] < 2,
+  ]
+  fc_annotations <- do.call(rbind, lapply(fc_order, function(x) {
+    tissue_values <- fc_data$expression_fc[fc_data$tissue == x]
+    data.frame(
+      tissue = x,
+      y = max(tissue_values)*1.4,
+      significance_y = max(tissue_values)*1.08,
+      label = paste0("n=", length(tissue_values)),
+      adjusted_p = fc_test_results$adjusted_p[
+        match(x, fc_test_results$tissue)
+      ],
+      significance = fc_test_results$significance[
+        match(x, fc_test_results$tissue)
+      ]
+    )
+  }))
+  fc_annotations$tissue <- factor(
+    fc_annotations$tissue, levels = fc_order
+  )
+
+  list(
+    data = fc_data,
+    multi = fc_multi,
+    single = fc_single,
+    annotations = fc_annotations
+  )
+}
+
+tissue_k4fh_plot_data <- prepare_tissue_fc_plot_data(
+  tissue_fc_by_ensembl
+)
+tissue_k1f_plot_data <- prepare_tissue_fc_plot_data(
+  tissue_k1f_fc_by_ensembl
+)
+tissue_k3h_plot_data <- prepare_tissue_fc_plot_data(
+  tissue_k3h_fc_by_ensembl
+)
+```
+
+```{r tissue-fc-plot-helper, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+draw_tissue_fc_violin <- function(plot_data, plot_title) {
+  ggplot(plot_data$data, aes(x = tissue, y = expression_fc)) +
+    geom_hline(
+      yintercept = 1, color = "#666666", linetype = 2, linewidth = 0.45
+    ) +
+    geom_violin(
+      data = plot_data$multi,
+      aes(fill = group),
+      scale = "width", trim = TRUE, color = "#5A4A62", linewidth = 0.3,
+      adjust = 0.75
+    ) +
+    geom_boxplot(
+      data = plot_data$multi,
+      width = 0.12, fill = "white", outlier.stroke = 0.5,
+      color = "#3D3348", linewidth = 0.3
+    ) +
+    geom_point(
+      data = plot_data$single,
+      aes(fill = group),
+      shape = 21, size = 2.2, color = "#3D3348", stroke = 0.3,
+      show.legend = FALSE
+    ) +
+    geom_text(
+      data = plot_data$annotations,
+      aes(x = tissue, y = y, label = label),
+      inherit.aes = FALSE, size = 2.35, angle = 90, hjust = 0
+    ) +
+    geom_text(
+      data = plot_data$annotations,
+      aes(x = tissue, y = significance_y, label = significance),
+      inherit.aes = FALSE,
+      position = position_nudge(x = -0.08),
+      size = 3.2, fontface = "bold", hjust = 0.5, vjust = 0,
+      parse = TRUE
+    ) +
+    scale_y_log10(
+      breaks = 10^(-2:6),
+      labels = scales::label_log(base = 10),
+      expand = expansion(mult = c(0.03, 0.13))
+    ) +
+    scale_fill_manual(
+      values = c(
+        "Endoderm tissue enriched genes" = "#B9A6CB",
+        "Other tissue enriched genes" = "#B8B2BC"
+      ),
+      name = NULL
+    ) +
+    labs(
+      x = NULL, y = "Expression FC", title = plot_title,
+      caption = paste(
+        "Up/down arrows: tissue median relative to all other genes;",
+        "stars: BH-adjusted Wilcoxon p value."
+      )
+    ) +
+    theme_classic(base_size = 10) +
+    theme(
+      axis.text.x = element_text(
+        angle = 55, hjust = 1, vjust = 1, size = 8
+      ),
+      axis.text.y = element_text(size = 9, angle = 90, vjust = 0.5),
+      axis.title.y = element_text(size = 10),
+      axis.ticks.x = element_blank(),
+      legend.position = "top",
+      legend.justification = "left",
+      legend.key.width = grid::unit(1.2, "lines"),
+      plot.caption = element_text(size = 7, hjust = 0),
+      plot.margin = margin(6, 14, 12, 10)
+    )
+}
+```
+
+```{r tissue-k4fh-fc-violin, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.25, dpi=300}
+draw_tissue_fc_violin(tissue_k4fh_plot_data, NULL)
+```
+
+```{r tissue-k1f-fc-violin, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.25, dpi=300}
+draw_tissue_fc_violin(tissue_k1f_plot_data, "K1F")
+```
+
+```{r tissue-k3h-fc-violin, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.25, dpi=300}
+draw_tissue_fc_violin(tissue_k3h_plot_data, "K3H")
+```
+
+### HepG2 versus K562 DE counts
+
+```{r hepG2-k562-de-counts-load, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+hepG2_k562_de_counts <- read.table(
+  path.expand(
+    "~/mnt/scratch/endo_pred/rnaseqdata/with_hepG2_limmaTrend_DEA/up_down_counts_FDR01.txt"
+  ),
+  header = TRUE, sep = "\t", check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+stopifnot(
+  hepG2_k562_de_counts$Total ==
+    hepG2_k562_de_counts$Up+hepG2_k562_de_counts$Down
+)
+hepG2_k562_condition_order <- c(
+  "S5", "S4", "S3d5", "S3", "S2d5", "S2", "S1d5", "S1"
+)
+hepG2_k562_de_long <- rbind(
+  data.frame(
+    Sample = hepG2_k562_de_counts$Sample,
+    Direction = "Higher in HepG2",
+    Genes = hepG2_k562_de_counts$Up
+  ),
+  data.frame(
+    Sample = hepG2_k562_de_counts$Sample,
+    Direction = "Higher in K562",
+    Genes = hepG2_k562_de_counts$Down
+  )
+)
+hepG2_k562_de_long$Sample <- factor(
+  hepG2_k562_de_long$Sample,
+  levels = hepG2_k562_condition_order
+)
+hepG2_k562_de_long$Direction <- factor(
+  hepG2_k562_de_long$Direction,
+  levels = c("Higher in HepG2", "Higher in K562")
+)
+hepG2_k562_de_long$signed_genes <- ifelse(
+  hepG2_k562_de_long$Direction == "Higher in HepG2",
+  hepG2_k562_de_long$Genes,
+  -hepG2_k562_de_long$Genes
+)
+```
+
+```{r hepG2-k562-de-diverging-bars, echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=3.3, dpi=300}
+ggplot(
+  hepG2_k562_de_long,
+  aes(x = Sample, y = signed_genes, fill = Direction)
+) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.35) +
+  geom_col(
+    width = 0.72, color = "#4B4350", linewidth = 0.25
+  ) +
+  geom_text(
+    aes(
+      y = signed_genes+ifelse(signed_genes > 0, 220, -220),
+      label = scales::comma(Genes)
+    ),
+    size = 2.4
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Higher in HepG2" = "#D98C83",
+      "Higher in K562" = "#6FAFA8"
+    ),
+    name = NULL
+  ) +
+  scale_y_continuous(
+    labels = function(x) scales::comma(abs(x)),
+    expand = expansion(mult = c(0.08, 0.08))
+  ) +
+  labs(
+    x = "K562",
+    y = "Number of DE genes"
+  ) +
+  theme_classic(base_size = 9) +
+  theme(
+    axis.text.x = element_text(size = 7.5),
+    axis.text.y = element_text(size = 8, angle = 90, vjust = 0.5),
+    axis.title = element_text(size = 9),
+    legend.text = element_text(size = 8),
+    legend.key.size = grid::unit(0.35, "cm"),
+    legend.position = "top"
+  )
+```
+
+
+### load 
+```{r, echo=FALSE, message=F,include=F}
+gHill_par_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+
+  gHill_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+
+  ### Hill stderr
+  fit_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k4fh$synergy <- gHill_par_foxa1_k4fh$regP-(gHill_par_foxa1_k1f$regP+gHill_par_foxa1_k3h$regP)
+bc_full_list <- row.names(gHill_par_foxa1_k4fh)
+
+lib1_dose_synergy <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+lib1_dose_synergy_std <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy_std.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+if (length(setdiff(bc_full_list, row.names(lib1_dose_synergy))) > 0 ||
+    length(setdiff(bc_full_list, row.names(lib1_dose_synergy_std))) > 0) {
+  stop("Precalculated lib1 dose synergy or its SD is missing for one or more fitted CREs")
+}
+gHill_par_foxa1_k4fh[bc_full_list, "hepG2synergy"] <-
+  lib1_dose_synergy[bc_full_list,]$hepG2_synergy
+gHill_std_foxa1_k4fh[bc_full_list, "hepG2synergy"] <-
+  lib1_dose_synergy_std[bc_full_list,]$hepG2_synergy_sd
+  
+  gene_gHill_par_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+  gene_gHill_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_biostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gene_fit_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_gene_k4fh_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+gene_full_list <- row.names(gene_gHill_par_foxa1_k4fh)
+
+gene_dose_synergy <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gene_dose_synergy.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+gene_dose_synergy_std <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gene_dose_synergy_std.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+
+missing_gene_synergy <- setdiff(gene_full_list, row.names(gene_dose_synergy))
+missing_gene_synergy_std <- setdiff(gene_full_list, row.names(gene_dose_synergy_std))
+if (length(missing_gene_synergy) > 0 || length(missing_gene_synergy_std) > 0) {
+  stop("Precalculated dose synergy or its SD is missing for one or more fitted genes")
+}
+
+gene_gHill_par_foxa1_k4fh[gene_full_list, "synergy"] <-
+  gene_dose_synergy[gene_full_list,]$regP_synergy
+gene_gHill_std_foxa1_k4fh[gene_full_list, "synergy"] <-
+  gene_dose_synergy_std[gene_full_list,]$regP_synergy_sd
+gene_gHill_par_foxa1_k4fh[gene_full_list, "hepG2synergy"] <-
+  gene_dose_synergy[gene_full_list,]$hepG2_synergy
+gene_gHill_std_foxa1_k4fh[gene_full_list, "hepG2synergy"] <-
+  gene_dose_synergy_std[gene_full_list,]$hepG2_synergy_sd
+
+conc_foxa1 <- c(1.14511152,1.870470303,4.202731758,12.55323512,32.15738598,58.73244109,112.9926126,159.465) ## in nM
+conc_hnf4a_alone <- c(0.2986401 , 0.4620007,  0.6853293  ,1.7249063  ,7.1600411 ,13.8676874 ,31.4189434 ,47.4772956)
+
+#conc_hnf4a <- c(0.261512863,0.294713335,0.502006255,1.114882814,1.52022912,4.100298822,13.96516233,27.00893)*3.2319466
+conc_hnf4a <- c(0.8451956 , 0.9524978 , 1.6224574 , 3.6032417 , 4.9132993 ,13.2519468 ,45.1346589, 87.2914195)
+
+conc_dox <- c(0.004, 0.02, 0.05, 0.1, 0.25, 0.5, 1.25, 2.5)
+
+
+      r2_cut <- 0.
+portion_cut <- 1
+
+smallError_list <- bc_full_list[which(gHill_par_foxa1_k1f[bc_full_list,]$r2> r2_cut & fit_std_foxa1_k1f[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$n & fit_std_foxa1_k1f[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$Kd & gHill_par_foxa1_k1f[bc_full_list,]$Kd < max(conc_foxa1) 
+                                      &  abs(log10(gHill_par_foxa1_k1f[bc_full_list,]$n))<1)]
+largeError_list <-setdiff(bc_full_list,smallError_list)
+
+smallError_list2 <- bc_full_list[which(gHill_par_foxa1_k3h[bc_full_list,]$r2> r2_cut  & fit_std_foxa1_k3h[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$n & fit_std_foxa1_k3h[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$Kd & gHill_par_foxa1_k3h[bc_full_list,]$Kd < max(conc_hnf4a_alone)
+                                       &  abs(log10(gHill_par_foxa1_k3h[bc_full_list,]$n))<1)]
+largeError_list2 <-setdiff(bc_full_list,smallError_list2)
+
+smallError_list3 <- bc_full_list[which(gHill_par_foxa1_k4fh[bc_full_list,]$r2> r2_cut & fit_std_foxa1_k4fh[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$n & fit_std_foxa1_k4fh[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$Kd & gHill_par_foxa1_k4fh[bc_full_list,]$Kd < max(conc_hnf4a*conc_foxa1)
+                                        &  abs(log10(gHill_par_foxa1_k4fh[bc_full_list,]$n))<1)]
+largeError_list3 <-setdiff(bc_full_list,smallError_list3)
+
+
+final_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+#test <- fit_std_foxa1_k4fh[smallError_list3,]
+
+gene_smallError_list3 <- gene_full_list[which(gene_gHill_par_foxa1_k4fh[gene_full_list,]$r2> r2_cut & #gene_gHill_par_foxa1_k4fh[gene_full_list,]$regP>3 &
+                                                gene_fit_std_foxa1_k4fh[gene_full_list,]$n<portion_cut*gene_gHill_par_foxa1_k4fh[gene_full_list,]$n & gene_fit_std_foxa1_k4fh[gene_full_list,]$Kd<portion_cut*gene_gHill_par_foxa1_k4fh[gene_full_list,]$Kd & gene_gHill_par_foxa1_k4fh[gene_full_list,]$Kd < max(conc_hnf4a*conc_foxa1)
+                                        &  abs(log10(gene_gHill_par_foxa1_k4fh[gene_full_list,]$n))<1)]
+gene_largeError_list3 <-setdiff(gene_full_list,gene_smallError_list3)
+
+```
+
+### par per tissue
+
+```{r tissue-fitted-parameter-violins, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.25, dpi=300}
+gene_tissue_parameter_values <- list(
+  RegP = setNames(
+    gene_gHill_par_foxa1_k4fh[gene_full_list, "regP"],
+    sub("\\..*$", "", gene_full_list)
+  ),
+  `HepG2 synergy` = setNames(
+    gene_gHill_par_foxa1_k4fh[gene_full_list, "hepG2synergy"],
+    sub("\\..*$", "", gene_full_list)
+  ),
+  EC50 = setNames(
+    sqrt(gene_gHill_par_foxa1_k4fh[gene_smallError_list3, "Kd"]),
+    sub("\\..*$", "", gene_smallError_list3)
+  ),
+  # Use the doubled FH Hill coefficient for plotting only.
+  `Hill coefficient n` = setNames(
+    2*gene_gHill_par_foxa1_k4fh[gene_smallError_list3, "n"],
+    sub("\\..*$", "", gene_smallError_list3)
+  )
+)
+
+prepare_tissue_parameter_plot_data <- function(
+    parameter_values, min_tissue_n = NULL
+) {
+  parameter_data <- do.call(rbind, Map(function(tissue_genes, tissue_name) {
+    tissue_gene_ids <- as.character(tissue_genes$Ensembl)
+    values <- unname(parameter_values[tissue_gene_ids])
+    data.frame(
+      tissue = rep(tissue_name, length(values)),
+      gene = tissue_gene_ids,
+      parameter_value = as.numeric(values),
+      endoderm = rep(
+        tissue_name %in% tissue_fc_endoderm_names,
+        length(values)
+      ),
+      stringsAsFactors = FALSE
+    )
+  }, tissue_fc_gene_lists, tissue_fc_names))
+  parameter_data <- parameter_data[
+    is.finite(parameter_data$parameter_value),
+  ]
+  parameter_universe <- parameter_values[is.finite(parameter_values)]
+  parameter_universe <- parameter_universe[
+    !duplicated(names(parameter_universe))
+  ]
+  test_tissues <- unique(parameter_data$tissue)
+  tissue_p_values <- vapply(test_tissues, function(tissue_name) {
+    tissue_gene_ids <- intersect(
+      unique(parameter_data$gene[parameter_data$tissue == tissue_name]),
+      names(parameter_universe)
+    )
+    tissue_values <- unname(parameter_universe[tissue_gene_ids])
+    rest_values <- unname(parameter_universe[
+      setdiff(names(parameter_universe), tissue_gene_ids)
+    ])
+    if (length(tissue_values) < 2 || length(rest_values) < 2) {
+      return(NA_real_)
+    }
+    suppressWarnings(
+      wilcox.test(tissue_values, rest_values, exact = FALSE)$p.value
+    )
+  }, numeric(1))
+  tissue_median_difference <- vapply(test_tissues, function(tissue_name) {
+    tissue_gene_ids <- intersect(
+      unique(parameter_data$gene[parameter_data$tissue == tissue_name]),
+      names(parameter_universe)
+    )
+    tissue_values <- unname(parameter_universe[tissue_gene_ids])
+    rest_values <- unname(parameter_universe[
+      setdiff(names(parameter_universe), tissue_gene_ids)
+    ])
+    median(tissue_values)-median(rest_values)
+  }, numeric(1))
+  tissue_adjusted_p <- p.adjust(tissue_p_values, method = "BH")
+  tissue_significance_stars <- ifelse(
+    is.na(tissue_adjusted_p), "",
+    ifelse(
+      tissue_adjusted_p < 0.001, "***",
+      ifelse(
+        tissue_adjusted_p < 0.01, "**",
+        ifelse(tissue_adjusted_p < 0.05, "*", "")
+      )
+    )
+  )
+  tissue_significance <- ifelse(
+    tissue_significance_stars == "",
+    "phantom()",
+    paste0(
+      "phantom() ",
+      ifelse(tissue_median_difference > 0, "%up%", "%down%"),
+      " '", tissue_significance_stars, "'"
+    )
+  )
+  parameter_test_results <- data.frame(
+    tissue = test_tissues,
+    adjusted_p = tissue_adjusted_p,
+    median_difference = tissue_median_difference,
+    significance = tissue_significance,
+    stringsAsFactors = FALSE
+  )
+  if (!is.null(min_tissue_n)) {
+    initial_tissue_n <- table(parameter_data$tissue)
+    retained_tissues <- names(initial_tissue_n)[
+      initial_tissue_n >= min_tissue_n
+    ]
+    parameter_data <- parameter_data[
+      parameter_data$tissue %in% retained_tissues,
+    ]
+  }
+  parameter_data$group <- factor(
+    ifelse(
+      parameter_data$endoderm,
+      "Endoderm tissue enriched genes",
+      "Other tissue enriched genes"
+    ),
+    levels = c(
+      "Endoderm tissue enriched genes",
+      "Other tissue enriched genes"
+    )
+  )
+
+  parameter_median <- tapply(
+    parameter_data$parameter_value,
+    parameter_data$tissue,
+    median,
+    na.rm = TRUE
+  )
+  tissue_order <- names(parameter_median)[order(-parameter_median)]
+  parameter_tissue_n <- table(parameter_data$tissue)
+  high_n_tissues <- names(parameter_tissue_n)[parameter_tissue_n > 10]
+  low_n_tissues <- names(parameter_tissue_n)[
+    parameter_tissue_n >= 2 & parameter_tissue_n <= 10
+  ]
+  single_gene_tissue_names <- names(parameter_tissue_n)[
+    parameter_tissue_n == 1
+  ]
+  tissue_order <- c(
+    intersect(tissue_order, high_n_tissues),
+    intersect(tissue_order, low_n_tissues),
+    intersect(tissue_order, single_gene_tissue_names)
+  )
+  parameter_data$tissue <- factor(
+    parameter_data$tissue,
+    levels = tissue_order
+  )
+
+  tissue_n <- table(parameter_data$tissue)
+  multi_gene_tissues <- parameter_data[
+    tissue_n[as.character(parameter_data$tissue)] >= 2,
+  ]
+  single_gene_tissues <- parameter_data[
+    tissue_n[as.character(parameter_data$tissue)] < 2,
+  ]
+  parameter_span <- diff(range(parameter_data$parameter_value))
+  if (!is.finite(parameter_span) || parameter_span == 0) {
+    parameter_span <- 1
+  }
+  annotations <- do.call(rbind, lapply(tissue_order, function(tissue_name) {
+    tissue_values <- parameter_data$parameter_value[
+      parameter_data$tissue == tissue_name
+    ]
+    data.frame(
+      tissue = tissue_name,
+      y = max(tissue_values)+0.04*parameter_span,
+      significance_y = max(tissue_values)+0.01*parameter_span,
+      label = paste0("n=", length(tissue_values)),
+      adjusted_p = parameter_test_results$adjusted_p[
+        match(tissue_name, parameter_test_results$tissue)
+      ],
+      significance = parameter_test_results$significance[
+        match(tissue_name, parameter_test_results$tissue)
+      ]
+    )
+  }))
+  annotations$tissue <- factor(annotations$tissue, levels = tissue_order)
+
+  list(
+    data = parameter_data,
+    multi = multi_gene_tissues,
+    single = single_gene_tissues,
+    annotations = annotations
+  )
+}
+
+draw_tissue_parameter_violin <- function(
+    parameter_values, y_label, log_y = FALSE,
+    min_tissue_n = NULL, plot_title = NULL
+) {
+  plot_data <- prepare_tissue_parameter_plot_data(
+    parameter_values,
+    min_tissue_n = min_tissue_n
+  )
+  if (log_y) {
+    plot_data$data <- plot_data$data[plot_data$data$parameter_value > 0, ]
+    plot_data$multi <- plot_data$multi[plot_data$multi$parameter_value > 0, ]
+    plot_data$single <- plot_data$single[plot_data$single$parameter_value > 0, ]
+    plot_data$annotations$y <- vapply(
+      levels(plot_data$data$tissue),
+      function(tissue_name) {
+        max(plot_data$data$parameter_value[
+          plot_data$data$tissue == tissue_name
+        ])*1.25
+      },
+      numeric(1)
+    )
+    plot_data$annotations$significance_y <- vapply(
+      levels(plot_data$data$tissue),
+      function(tissue_name) {
+        max(plot_data$data$parameter_value[
+          plot_data$data$tissue == tissue_name
+        ])*1.08
+      },
+      numeric(1)
+    )
+  }
+
+  p <- ggplot(plot_data$data, aes(x = tissue, y = parameter_value))+
+    geom_violin(
+      data = plot_data$multi,
+      aes(fill = group),
+      scale = "width", trim = TRUE, adjust = 0.75,
+      color = "#5A4A62", linewidth = 0.3
+    )+
+    geom_boxplot(
+      data = plot_data$multi,
+      width = 0.12, fill = "white", outlier.stroke = 0.5,
+      color = "#3D3348", linewidth = 0.3
+    )+
+    geom_point(
+      data = plot_data$single,
+      aes(fill = group),
+      shape = 21, size = 2.2, color = "#3D3348", stroke = 0.3,
+      show.legend = FALSE
+    )+
+    geom_text(
+      data = plot_data$annotations,
+      aes(x = tissue, y = y, label = label),
+      inherit.aes = FALSE, size = 2.35, angle = 90, hjust = 0
+    )+
+    geom_text(
+      data = plot_data$annotations,
+      aes(x = tissue, y = significance_y, label = significance),
+      inherit.aes = FALSE,
+      position = position_nudge(x = -0.08),
+      size = 3.2, fontface = "bold", hjust = 0.5, vjust = 0,
+      parse = TRUE
+    )+
+    scale_fill_manual(
+      values = c(
+        "Endoderm tissue enriched genes" = "#B9A6CB",
+        "Other tissue enriched genes" = "#B8B2BC"
+      ),
+      name = NULL
+    )+
+    labs(
+      x = NULL, y = y_label, title = plot_title,
+      caption = paste(
+        "Up/down arrows: tissue median relative to all other genes;",
+        "stars: BH-adjusted Wilcoxon p value."
+      )
+    )+
+    theme_classic(base_size = 10)+
+    theme(
+      axis.text.x = element_text(
+        angle = 55, hjust = 1, vjust = 1, size = 8
+      ),
+      axis.text.y = element_text(size = 9, angle = 90, vjust = 0.5),
+      axis.title.y = element_text(size = 10),
+      axis.ticks.x = element_blank(),
+      legend.position = "top",
+      legend.justification = "left",
+      legend.key.width = grid::unit(1.2, "lines"),
+      plot.caption = element_text(size = 7, hjust = 0),
+      plot.margin = margin(6, 14, 12, 10)
+    )
+  if (log_y) {
+    p <- p+scale_y_log10(
+      labels = scales::label_log(base = 10),
+      expand = expansion(mult = c(0.03, 0.13))
+    )
+  } else {
+    p <- p+scale_y_continuous(expand = expansion(mult = c(0.03, 0.13)))
+  }
+  p
+}
+
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$RegP, "RegP"
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$`HepG2 synergy`, "HepG2 synergy"
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$EC50,
+  expression(EC[50]~"(nM)"),
+  log_y = TRUE
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$`Hill coefficient n`,
+  "Hill coefficient n"
+)
+```
+
+```{r tissue-fitted-parameter-violins-n10, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, fig.width=10, fig.height=4.25, dpi=300}
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$RegP,
+  "RegP",
+  min_tissue_n = 10,
+  plot_title = "Tissues with n >= 10"
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$`HepG2 synergy`,
+  "HepG2 synergy",
+  min_tissue_n = 10,
+  plot_title = "Tissues with n >= 10"
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$EC50,
+  expression(EC[50]~"(nM)"),
+  log_y = TRUE,
+  min_tissue_n = 10,
+  plot_title = "Tissues with n >= 10"
+)
+draw_tissue_parameter_violin(
+  gene_tissue_parameter_values$`Hill coefficient n`,
+  "Hill coefficient n",
+  min_tissue_n = 10,
+  plot_title = "Tissues with n >= 10"
+)
+```
+
+### par dist compare
+
+```{r ,  eval=T,fig.width=2, fig.height=2,  echo=F, warning=F, results='show', fig.show='show',message=FALSE, dpi=600}
+
+get_F_EC <- function(x){(x/0.467)^0.5}
+get_H_EC <- function(x){(x*0.467)^0.5}
+getFH_fromF <- function(x){0.467*x^2}
+
+
+my_violin <- function(x,y,colors=c("#D9AAB6","#DDB06F"),ylab,log_y=FALSE,hline=NULL){
+  groupname <- c("CRE","Gene")
+  n <- length(x)
+df <- data.frame(
+  group = c(rep(groupname[1], each=n),rep(groupname[2],length(y))),
+  value = c(x,y)
+)
+df$group <- factor(df$group, levels = groupname)
+names(colors) <- groupname
+p_test <- wilcox.test(x[is.finite(x)],y[is.finite(y)],exact=FALSE)
+p_label <- paste0("p = ", format.pval(p_test$p.value, digits=2, eps=2.2e-16))
+p <- ggplot(df, aes(x=group, y=value, fill=group))
+if (!is.null(hline)) {
+  p <- p + geom_hline(yintercept=hline, col=alpha("black",0.8), linetype=5, linewidth=0.6)
+}
+p <- p + geom_violin() +
+    geom_boxplot(
+      width = 0.1,
+      fill = "white",
+      outlier.size = 0.75
+    ) +
+  scale_fill_manual(values=colors)+
+  theme(
+  axis.title.x = element_blank(),
+  axis.text.y = element_text(angle = 90, vjust = 0.5),
+  #axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank(),
+  legend.position = "none"
+  )+labs(
+    x = "",
+    y = ylab
+  )
+if (log_y) {
+  finite_value <- df$value[is.finite(df$value) & df$value > 0]
+  log_range <- range(log10(finite_value))
+  log_span <- diff(log_range)
+  if (log_span == 0) log_span <- 1
+  bracket_y <- 10^(log_range[2]+0.08*log_span)
+  bracket_tip_y <- 10^(log_range[2]+0.05*log_span)
+  p_value_y <- 10^(log_range[2]+0.15*log_span)
+  p <- p +
+    annotate(
+      "segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y,
+      linewidth = 0.35
+    ) +
+    annotate(
+      "segment", x = 1, xend = 1, y = bracket_y, yend = bracket_tip_y,
+      linewidth = 0.35
+    ) +
+    annotate(
+      "segment", x = 2, xend = 2, y = bracket_y, yend = bracket_tip_y,
+      linewidth = 0.35
+    ) +
+    annotate("text",x=1.5,y=p_value_y,label=p_label,size=3) +
+    scale_y_log10(expand=expansion(mult=c(0.05,0.22)))
+} else {
+  finite_value <- df$value[is.finite(df$value)]
+  value_range <- range(finite_value)
+  value_span <- diff(value_range)
+  if (value_span == 0) value_span <- max(1,abs(value_range[2]))
+  bracket_y <- value_range[2]+0.08*value_span
+  bracket_tip_y <- value_range[2]+0.05*value_span
+  p_value_y <- value_range[2]+0.15*value_span
+  p <- p +
+    annotate(
+      "segment", x = 1, xend = 2, y = bracket_y, yend = bracket_y,
+      linewidth = 0.35
+    ) +
+    annotate(
+      "segment", x = 1, xend = 1, y = bracket_y, yend = bracket_tip_y,
+      linewidth = 0.35
+    ) +
+    annotate(
+      "segment", x = 2, xend = 2, y = bracket_y, yend = bracket_tip_y,
+      linewidth = 0.35
+    ) +
+    annotate("text",x=1.5,y=p_value_y,label=p_label,size=3) +
+    scale_y_continuous(expand=expansion(mult=c(0.05,0.22)))
+}
+p
+ # axis.ticks = element_blank())
+}
+
+compare_cre_gene <- function(x,y,ylab="",log_y=FALSE,hline=NULL){
+  print(my_violin(x,y,ylab=ylab,log_y=log_y,hline=hline))
+}
+
+draw_group_legend <- function(colors=c("#D9AAB6","#DDB06F")) {
+  groupname <- c("CRE","Gene")
+  legend_df <- data.frame(
+    group=factor(groupname,levels=groupname),
+    value=1
+  )
+  names(colors) <- groupname
+  legend_plot <- ggplot(legend_df,aes(x=group,y=value,fill=group)) +
+    geom_point(shape=22,size=4) +
+    scale_fill_manual(values=colors) +
+    guides(fill=guide_legend(title="group")) +
+    theme_void() +
+    theme(legend.position="right")
+  legend_grob <- ggplotGrob(legend_plot)
+  legend_index <- which(legend_grob$layout$name == "guide-box-right")
+  grid::grid.newpage()
+  grid::grid.draw(legend_grob$grobs[[legend_index]])
+}
+
+draw_group_legend()
+
+#compare_cre_gene(gHill_par_foxa1_k4fh$Kd,gene_gHill_par_foxa1_k4fh$Kd)
+#compare_cre_gene(log(gHill_par_foxa1_k4fh$Kd),log(gene_gHill_par_foxa1_k4fh$Kd))
+
+hepG2_foxa1_conc <- 49.27642992
+hepG2_hnf4a_conc <- 26.53009141
+hepG2_combined_conc <- sqrt(hepG2_foxa1_conc*hepG2_hnf4a_conc)
+
+#compare_cre_gene((gHill_par_foxa1_k4fh[smallError_list3,]$Kd)^0.5,(gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$Kd)^0.5,ylab="EC50 in log scale",log_y=T,hline=hepG2_combined_conc)
+
+compare_cre_gene(
+  (gHill_par_foxa1_k4fh[smallError_list3,]$Kd)^0.5,
+  (gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$Kd)^0.5,
+  ylab = expression(EC[50]),
+  hline = hepG2_combined_conc
+)
+
+#compare_cre_gene(gHill_par_foxa1_k4fh$n,gene_gHill_par_foxa1_k4fh$n)
+compare_cre_gene(
+  gHill_par_foxa1_k4fh[smallError_list3,]$n,
+  gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$n,
+  ylab = expression(italic(n)[H])
+)
+
+#compare_cre_gene(gHill_par_foxa1_k4fh$regP,gene_gHill_par_foxa1_k4fh$regP)
+compare_cre_gene(
+  gHill_par_foxa1_k4fh[smallError_list3,]$regP,
+  gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$regP,
+  ylab = expression(RegP)
+)
+
+#plot(gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$regP,gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$Kd,log="y")
+#cor(gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$regP,gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$Kd)
+  
+compare_cre_gene(
+  gHill_par_foxa1_k4fh[smallError_list3,]$hepG2synergy,
+  gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$hepG2synergy,
+  ylab = expression("Synergy")
+)
+#compare_cre_gene(gHill_par_foxa1_k4fh[smallError_list3,]$synergy,gene_gHill_par_foxa1_k4fh[gene_smallError_list3,]$synergy, ylab="regP synergy")
+
+```
+
+
+
+### cherry genes
+
+```{r cherry-gene-load, echo=FALSE, message=F, include=F}
+cherry_dir <- path.expand("~/mnt/scratch/25_lib3_sequencing/260103_lib3_k4fh_fullLane/bc_combined")
+cherry_header <- c("s5", "s4", "s3d5", "s3", "s2d5", "s2", "s1d5", "s1")
+
+cherry_k4fh_mean <- read.table(
+  file.path(cherry_dir, "cherryGenes_wname_k4fh_hsp_allrMean.txt"),
+  row.names = 1, sep = "\t", header = FALSE, check.names = FALSE
+)
+cherry_k4fh_dev <- read.table(
+  file.path(cherry_dir, "cherryGenes_wname_k4fh_hsp_allrDev.txt"),
+  row.names = 1, sep = "\t", header = FALSE, check.names = FALSE
+)
+gHill_par_cherry_k4fh <- read.table(
+  "/Users/eve/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib3/cherryGenes/cherryGenes_gHill_lib3_k4fh_trained_par.txt",
+  row.names = 1, sep = "\t", header = FALSE,
+  col.names = c("Name", "Kd", "n", "Fmax", "basal", "regP", "r2")
+)
+cherry_dose_synergy <- read.table(
+  "/Users/eve/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib3/cherryGenes/cherryGenes_lib3_dose_synergy.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+cherry_dose_synergy_std <- read.table(
+  "/Users/eve/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib3/cherryGenes/cherryGenes_lib3_dose_synergy_std.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+fit_std_cherry_k4fh <- read.table(
+  "/Users/eve/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib3/cherryGenes/cherryGenes_gHill_lib3_k4fh_trained_coefstd.txt",
+  row.names = 1, sep = "\t", header = FALSE,
+  col.names = c("Name", "Kd", "n", "Fmax", "basal", "regP")
+)
+bio_std_cherry_k4fh <- read.table(
+  "/Users/eve/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib3/cherryGenes/cherryGenes_gHill_lib3_k4fh_trained_biostd.txt",
+  row.names = 1, sep = "\t", header = FALSE,
+  col.names = c("Name", "Kd", "n", "Fmax", "basal", "regP")
+)
+cherry_tss_paths <- c(
+  "/scratch/bclab/yuning/libDesign/ai_pftv3/candidate_lists/endo_genes_tss_hg38.bed",
+  path.expand("~/mnt/scratch/libDesign/ai_pftv3/candidate_lists/endo_genes_tss_hg38.bed")
+)
+cherry_tss_file <- cherry_tss_paths[file.exists(cherry_tss_paths)][1]
+if (is.na(cherry_tss_file)) {
+  stop("endo_genes_tss_hg38.bed is missing")
+}
+cherry_tss <- read.table(
+  cherry_tss_file, sep = "\t", header = FALSE,
+  col.names = c("chromosome", "start", "end", "gene")
+)
+cherry_gff3_paths <- c(
+  "/scratch/bclab/yuning/libDesign/ai_pftv3/candidate_lists/hg38_endo_genes.gff3",
+  path.expand("~/mnt/scratch/libDesign/ai_pftv3/candidate_lists/hg38_endo_genes.gff3")
+)
+cherry_gff3_file <- cherry_gff3_paths[file.exists(cherry_gff3_paths)][1]
+if (is.na(cherry_gff3_file)) {
+  stop("hg38_endo_genes.gff3 is missing")
+}
+cherry_gff3 <- read.table(
+  cherry_gff3_file, sep = "\t", header = FALSE, comment.char = "#",
+  quote = "", fill = TRUE,
+  col.names = c(
+    "chromosome", "source", "feature", "start", "end",
+    "score", "strand", "phase", "attributes"
+  )
+)
+gff3_attribute <- function(attributes, key) {
+  vapply(strsplit(attributes, ";", fixed = TRUE), function(fields) {
+    matching_field <- fields[startsWith(fields, paste0(key, "="))]
+    if (length(matching_field) == 0) return(NA_character_)
+    sub(paste0("^", key, "="), "", matching_field[1])
+  }, character(1))
+}
+cherry_gff3$gene_name <- gff3_attribute(cherry_gff3$attributes, "gene_name")
+cherry_gff3$transcript_id <- gff3_attribute(
+  cherry_gff3$attributes, "transcript_id"
+)
+cherry_mane_transcripts <- cherry_gff3[
+  cherry_gff3$feature == "transcript" &
+    grepl("(^|,)MANE_Select(,|;|$)", cherry_gff3$attributes),
+]
+if (!setequal(cherry_mane_transcripts$gene_name, c("ACTB", "APOB", "ARG1", "TUBB")) ||
+    anyDuplicated(cherry_mane_transcripts$gene_name)) {
+  stop("Expected exactly one MANE Select transcript for each cherry gene")
+}
+cherry_mane_features <- cherry_gff3[
+  cherry_gff3$transcript_id %in% cherry_mane_transcripts$transcript_id,
+]
+colnames(cherry_k4fh_mean) <- cherry_header
+colnames(cherry_k4fh_dev) <- cherry_header
+
+if (!identical(row.names(cherry_k4fh_mean), row.names(cherry_k4fh_dev))) {
+  stop("Cherry-gene mean and deviation matrices have different CRE identifiers")
+}
+
+r2_cut<- 0.9
+portion_cut <- Inf
+cherry_bc_full_list <- row.names(cherry_k4fh_mean)
+if (length(setdiff(cherry_bc_full_list, row.names(cherry_dose_synergy))) > 0 ||
+    length(setdiff(cherry_bc_full_list, row.names(cherry_dose_synergy_std))) > 0) {
+  stop("Precalculated cherry dose synergy or its SD is missing for one or more CREs")
+}
+gHill_par_cherry_k4fh[cherry_bc_full_list, "regPsynergy"] <-
+  cherry_dose_synergy[cherry_bc_full_list, "regP_synergy"]
+bio_std_cherry_k4fh[cherry_bc_full_list, "regPsynergy"] <-
+  cherry_dose_synergy_std[cherry_bc_full_list, "regP_synergy_sd"]
+cherry_gene <- sub("::.*$", "", cherry_bc_full_list)
+cherry_gene_order <- unique(cherry_gene)
+cherry_all_coordinates <- data.frame(
+  gene = cherry_gene,
+  chromosome = sub("^.*::([^:]+):.*$", "\\1", cherry_bc_full_list),
+  start = as.numeric(sub("^.*:([0-9]+)-.*$", "\\1", cherry_bc_full_list)),
+  end = as.numeric(sub("^.*-([0-9]+)\\(.*$", "\\1", cherry_bc_full_list)),
+  strand = sub("^.*\\(([+-])\\)$", "\\1", cherry_bc_full_list),
+  row.names = cherry_bc_full_list
+)
+cherry_fxh_con <- conc_foxa1*conc_hnf4a
+smallError_list3_cherry <- cherry_bc_full_list[which(
+  gHill_par_cherry_k4fh[cherry_bc_full_list,]$r2 > r2_cut &
+    fit_std_cherry_k4fh[cherry_bc_full_list,]$n < portion_cut*gHill_par_cherry_k4fh[cherry_bc_full_list,]$n &
+    fit_std_cherry_k4fh[cherry_bc_full_list,]$Kd < portion_cut*gHill_par_cherry_k4fh[cherry_bc_full_list,]$Kd &
+    gHill_par_cherry_k4fh[cherry_bc_full_list,]$Kd < max(conc_hnf4a*conc_foxa1+1) &
+    abs(log10(gHill_par_cherry_k4fh[cherry_bc_full_list,]$n)) < 1
+)]
+
+gHill_par_cherry_k4fh_filtered <- gHill_par_cherry_k4fh[
+  smallError_list3_cherry, , drop = FALSE
+]
+cherry_coordinates <- data.frame(
+  gene = sub("::.*$", "", row.names(gHill_par_cherry_k4fh_filtered)),
+  chromosome = sub(
+    "^.*::([^:]+):.*$", "\\1", row.names(gHill_par_cherry_k4fh_filtered)
+  ),
+  start = as.numeric(sub(
+    "^.*:([0-9]+)-.*$", "\\1", row.names(gHill_par_cherry_k4fh_filtered)
+  )),
+  end = as.numeric(sub(
+    "^.*-([0-9]+)\\(.*$", "\\1", row.names(gHill_par_cherry_k4fh_filtered)
+  )),
+  strand = sub(
+    "^.*\\(([+-])\\)$", "\\1", row.names(gHill_par_cherry_k4fh_filtered)
+  ),
+  regP = gHill_par_cherry_k4fh_filtered$regP,
+  regP_bio_std = bio_std_cherry_k4fh[
+    row.names(gHill_par_cherry_k4fh_filtered), "regP"
+  ],
+  regPsynergy = gHill_par_cherry_k4fh_filtered$regPsynergy,
+  regPsynergy_bio_std = bio_std_cherry_k4fh[
+    row.names(gHill_par_cherry_k4fh_filtered), "regPsynergy"
+  ],
+  row.names = row.names(gHill_par_cherry_k4fh_filtered)
+)
+cherry_coordinates$midpoint <-
+  (cherry_coordinates$start + cherry_coordinates$end) / 2
+
+test <- gHill_par_cherry_k4fh[smallError_list3_cherry,]
+cherry_h_c_labels <- c(1, 4, 13, 87)
+cherry_f_c_labels <- c(2, 13, 59, 160)
+cherry_fh_labels <- conc_foxa1[c(2, 4, 6, 8)]*conc_hnf4a[c(2, 4, 6, 8)]
+
+cherry_set_canvas <- function(x, xlab, xat, xlabels = "") {
+  plot(x, (c(1:8)-0.995)*36, log = "xy", pch = 16, cex = 0,
+       col = "white", axes = FALSE, ann = FALSE,ylim = c(0.1,25))
+  axis(2, at = c(1, 5, 25, 125), lwd = 1, tck = -0.02,
+       col = rgb(0, 0, 0, 0), col.ticks = "black", padj = 1.8,
+       cex.axis = 0.8, las = 3)
+  axis(1, at = xat, labels = xlabels, lwd = 1, tck = -0.02,
+       col = rgb(0, 0, 0, 0), col.ticks = "black", padj = -2,
+       cex.axis = 0.8)
+  title(ylab = "Activity [a.u.]", xlab = xlab, line = 1.2, cex.lab = 1)
+  box()
+}
+
+cherry_add_top_axis <- function() {
+  axis(3, at = cherry_fh_labels, labels = cherry_h_c_labels,
+       lwd = 1, tck = -0.02, col = rgb(0, 0, 0, 0),
+       col.ticks = "black", padj = 1.78, cex.axis = 0.8)
+}
+```
+
+```{r cherry-gene-cre-curves, eval=T, fig.width=2.9, fig.height=4.5, echo=F, dpi=600, warning=F, results='show'}
+#par(bg=NA)
+
+cherry_sort_metric <- cherry_k4fh_mean$s1/cherry_k4fh_mean$s5
+#cherry_sort_metric2 <- abs(cherry_sort_metric - 3)-abs(cherry_k4fh_mean$s1-5)+(cherry_k4fh_mean$s2+cherry_k4fh_mean$s2d5)/2
+cherry_sort_metric2 <- abs(cherry_k4fh_mean$s1d5/cherry_k4fh_mean$s5 - 3)-abs(cherry_k4fh_mean$s1-5)+(cherry_k4fh_mean$s2+cherry_k4fh_mean$s2d5)/2+(cherry_k4fh_mean$s2d5/cherry_k4fh_mean$s3)*.85
+
+cherry_colfunc <- colorRampPalette(c("#C5C5C5", "#E4DEEA", "#C9BCD6", "#9075ab"))
+cherry_colfunc <- colorRampPalette(c("#E4DEEA", "#C9BCD6", "#9075ab"))
+
+cherry_cutoff <- 1.5
+cherry_all_colors_4 <- rep(NA, length(cherry_bc_full_list))
+cherry_all_colors_4[which(cherry_sort_metric <= cherry_cutoff)] <- rep("#C5C5C5", length(which(cherry_sort_metric <= cherry_cutoff)))
+cherry_all_colors_4[which(cherry_sort_metric > cherry_cutoff)] <- cherry_colfunc(length(which(cherry_sort_metric > cherry_cutoff)))[rank(cherry_sort_metric[which(cherry_sort_metric > cherry_cutoff)])]
+
+plot(c(rep(1, 500), rep(1, length(cherry_bc_full_list))),
+     col = c(rep("#C5C5C5", 500), cherry_colfunc(length(cherry_bc_full_list))),
+     pch = 15, cex = 3, axes = FALSE, ann = FALSE)
+
+cherry_set_canvas(x = cherry_fxh_con, xlab = "[FOXA1] (nM)",
+                  xat = cherry_fh_labels, xlabels = cherry_f_c_labels)
+cherry_add_top_axis()
+
+for (i in order(cherry_sort_metric2, decreasing = TRUE)) {
+  lines(cherry_fxh_con, cherry_k4fh_mean[i,], col = "white", lwd = 1.5)
+  lines(cherry_fxh_con, cherry_k4fh_mean[i,],
+        col = alpha(cherry_all_colors_4[i], 0.66), lwd = 1)
+}
+```
+
+```{r cherry-gene-cre-curves-by-gene, eval=T, fig.width=2.9, fig.height=4.5, echo=F, dpi=600, warning=F, results='show'}
+for (gene_name in cherry_gene_order) {
+  gene_indices <- which(cherry_gene == gene_name & !is.na(cherry_sort_metric2))
+  if (length(gene_indices) == 0) {
+    next
+  }
+
+  cherry_set_canvas(x = cherry_fxh_con, xlab = "[FOXA1] (nM)",
+                    xat = cherry_fh_labels, xlabels = cherry_f_c_labels)
+  cherry_add_top_axis()
+  title(
+    main = paste0(gene_name, " (n=", length(gene_indices), ")"),
+    cex.main = 0.9
+  )
+
+  gene_plot_order <- intersect(
+    order(cherry_sort_metric2, decreasing = TRUE, na.last = NA),
+    gene_indices
+  )
+  for (i in gene_plot_order) {
+    lines(cherry_fxh_con, cherry_k4fh_mean[i,], col = "white", lwd = 1.5)
+    lines(cherry_fxh_con, cherry_k4fh_mean[i,],
+          col = alpha(cherry_all_colors_4[i], 0.66), lwd = 1)
+  }
+}
+```
+
+```{r cherry-regP-by-coordinate, eval=F, fig.width=3, fig.height=3.5, echo=F, dpi=600, warning=F, results='show'}
+cherry_regP_ylim <- range(
+  cherry_coordinates$regP-cherry_coordinates$regP_bio_std,
+  cherry_coordinates$regP+cherry_coordinates$regP_bio_std,
+  na.rm = TRUE
+)
+
+for (gene_name in cherry_gene_order) {
+  gene_coordinates <- cherry_coordinates[cherry_coordinates$gene == gene_name,]
+  gene_coordinates <- gene_coordinates[order(gene_coordinates$midpoint),]
+
+  plot(
+    gene_coordinates$midpoint,
+    gene_coordinates$regP,
+    type = "n",
+    ylim = cherry_regP_ylim,
+    axes = FALSE,
+    ann = FALSE
+  )
+  axis(2, lwd = 1, tck = -0.025, col = rgb(0, 0, 0, 0),
+       col.ticks = "black", padj = 1.7, cex.axis = 0.8, las = 3)
+  axis(1, lwd = 1, tck = -0.025, col = rgb(0, 0, 0, 0),
+       col.ticks = "black", padj = -2, cex.axis = 0.8)
+  title(
+    main = gene_name,
+    ylab = "regP",
+    xlab = paste0(unique(gene_coordinates$chromosome), " coordinate (bp)"),
+    line = 1.2,
+    cex.main = 0.9,
+    cex.lab = 1
+  )
+  box()
+  polygon(
+    c(gene_coordinates$midpoint, rev(gene_coordinates$midpoint)),
+    c(
+      gene_coordinates$regP+gene_coordinates$regP_bio_std,
+      rev(gene_coordinates$regP-gene_coordinates$regP_bio_std)
+    ),
+    col = alpha("#9075ab", 0.5),
+    border = NA
+  )
+  lines(gene_coordinates$midpoint, gene_coordinates$regP,
+        col = "#9075ab", lwd = 1.5)
+}
+```
+
+### cherry regP
+
+```{r cherry-regP-pygenometracks, eval=T, echo=F, warning=F, results='asis', message=F, out.width='100%', fig.align='center'}
+pygenometracks_bin <- "/Users/eve/miniconda3/envs/pygenometracks/bin/pyGenomeTracks"
+pygenometracks_python <- "/Users/eve/miniconda3/envs/pygenometracks/bin/python"
+if (!file.exists(pygenometracks_bin)) {
+  stop("The pyGenomeTracks Conda environment is missing")
+}
+
+cherry_browser_dir <- file.path(tempdir(), "cherry_pygenometracks")
+dir.create(cherry_browser_dir, showWarnings = FALSE, recursive = TRUE)
+cherry_browser_asset_dir <- file.path(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes",
+  "fig7_generated_assets", "cherry_regP"
+)
+dir.create(cherry_browser_asset_dir, showWarnings = FALSE, recursive = TRUE)
+Sys.setenv(MPLCONFIGDIR = file.path(cherry_browser_dir, "matplotlib"))
+dir.create(Sys.getenv("MPLCONFIGDIR"), showWarnings = FALSE, recursive = TRUE)
+pygenometracks_wrapper <- file.path(cherry_browser_dir, "short_scalebar_ends.py")
+writeLines(
+  c(
+    "import importlib",
+    "scale_bar_module = importlib.import_module('pygenometracks.tracks.ScaleBarTrack')",
+    "native_line2d = scale_bar_module.Line2D",
+    "def short_end_line2d(xdata, ydata, *args, **kwargs):",
+    "    if len(xdata) == 2 and xdata[0] == xdata[1] and tuple(ydata) == (0, 1):",
+    "        ydata = (0.30, 0.70)",
+    "    return native_line2d(xdata, ydata, *args, **kwargs)",
+    "scale_bar_module.Line2D = short_end_line2d",
+    "from pygenometracks.tracks.BedGraphTrack import BedGraphTrack",
+    "from pygenometracks.tracks.GenomeTrack import GenomeTrack",
+    "def regp_y_axis(self, ax, plot_axis):",
+    "    plot_axis.set_yticks([0, 3, 6])",
+    "    return GenomeTrack.plot_y_axis(self, ax, plot_axis, only_at_ticks=True)",
+    "BedGraphTrack.plot_y_axis = regp_y_axis",
+    "import os",
+    "from matplotlib.figure import Figure",
+    "native_suptitle = Figure.suptitle",
+    "def raised_suptitle(self, title, *args, **kwargs):",
+    "    kwargs.setdefault('y', 0.995)",
+    "    return native_suptitle(self, title, *args, **kwargs)",
+    "Figure.suptitle = raised_suptitle",
+    "from matplotlib.ticker import FixedLocator, FixedFormatter",
+    "from pygenometracks.tracksClass import XAxisTrack",
+    "native_x_axis_plot = XAxisTrack.plot",
+    "def broken_x_axis_plot(self, ax, chrom_region, region_start, region_end):",
+    "    native_x_axis_plot(self, ax, chrom_region, region_start, region_end)",
+    "    tick_positions = os.environ.get('BROKEN_X_TICKS', '')",
+    "    tick_labels = os.environ.get('BROKEN_X_LABELS', '')",
+    "    if tick_positions and tick_labels:",
+    "        positions = [float(value) for value in tick_positions.split(',')]",
+    "        labels = [label.replace('~', ' ') for label in tick_labels.split(':')]",
+    "        ax.xaxis.set_major_locator(FixedLocator(positions))",
+    "        ax.xaxis.set_major_formatter(FixedFormatter(labels))",
+    "XAxisTrack.plot = broken_x_axis_plot",
+    "from pygenometracks.plotTracks import main",
+    "main()"
+  ),
+  pygenometracks_wrapper
+)
+
+cherry_browser_images <- character(0)
+cherry_browser_specs <- list()
+cherry_browser_min <- floor(min(cherry_coordinates$regP, na.rm = TRUE))
+cherry_browser_max <- ceiling(max(cherry_coordinates$regP, na.rm = TRUE))
+
+merge_cherry_intervals <- function(start, end) {
+  interval_order <- order(start, end)
+  start <- start[interval_order]
+  end <- end[interval_order]
+  merged_start <- start[1]
+  merged_end <- end[1]
+
+  for (i in seq.int(2, length(start))) {
+    last_interval <- length(merged_start)
+    if (start[i] <= merged_end[last_interval]) {
+      merged_end[last_interval] <- max(merged_end[last_interval], end[i])
+    } else {
+      merged_start <- c(merged_start, start[i])
+      merged_end <- c(merged_end, end[i])
+    }
+  }
+  data.frame(start = merged_start, end = merged_end)
+}
+
+for (gene_name in cherry_gene_order) {
+  gene_coordinates <- cherry_coordinates[cherry_coordinates$gene == gene_name,]
+  gene_coordinates <- gene_coordinates[order(gene_coordinates$midpoint),]
+  chromosome <- unique(gene_coordinates$chromosome)
+  gene_all_coordinates <- cherry_all_coordinates[
+    cherry_all_coordinates$gene == gene_name, , drop = FALSE
+  ]
+  gene_tss <- cherry_tss[cherry_tss$gene == gene_name, , drop = FALSE]
+  if (nrow(gene_tss) != 1 || gene_tss$chromosome != chromosome) {
+    stop(paste0("Expected one matching hg38 TSS for ", gene_name))
+  }
+  gene_mane_transcript <- cherry_mane_transcripts[
+    cherry_mane_transcripts$gene_name == gene_name, , drop = FALSE
+  ]
+  gene_mane_features <- cherry_mane_features[
+    cherry_mane_features$gene_name == gene_name, , drop = FALSE
+  ]
+  gene_model_exons <- gene_mane_features[
+    gene_mane_features$feature == "exon", , drop = FALSE
+  ]
+  gene_model_cds <- gene_mane_features[
+    gene_mane_features$feature == "CDS", , drop = FALSE
+  ]
+  if (nrow(gene_mane_transcript) != 1 || nrow(gene_model_exons) == 0 ||
+      gene_mane_transcript$chromosome != chromosome) {
+    stop(paste0("Expected one matching MANE gene model for ", gene_name))
+  }
+  gene_model_exon_start <- gene_model_exons$start-1
+  gene_model_exon_end <- gene_model_exons$end
+  gene_model_cds_start <- if (nrow(gene_model_cds) > 0) {
+    min(gene_model_cds$start)-1
+  } else {
+    min(gene_model_exon_start)
+  }
+  gene_model_cds_end <- if (nrow(gene_model_cds) > 0) {
+    max(gene_model_cds$end)
+  } else {
+    min(gene_model_exon_start)
+  }
+
+  browser_breaks <- sort(unique(c(gene_coordinates$start, gene_coordinates$end)))
+  browser_segment_start <- head(browser_breaks, -1)
+  browser_segment_end <- tail(browser_breaks, -1)
+  browser_segment_midpoint <- (browser_segment_start+browser_segment_end)/2
+  browser_segment_regP <- vapply(browser_segment_midpoint, function(position) {
+    covering_windows <- which(
+      gene_coordinates$start <= position & gene_coordinates$end > position
+    )
+    if (length(covering_windows) == 0) {
+      return(NA_real_)
+    }
+    mean(gene_coordinates$regP[covering_windows], na.rm = TRUE)
+  }, numeric(1))
+  covered_segments <- is.finite(browser_segment_regP)
+  regP_bedgraph <- data.frame(
+    chromosome = chromosome,
+    start = browser_segment_start[covered_segments],
+    end = browser_segment_end[covered_segments],
+    regP = browser_segment_regP[covered_segments]
+  )
+  merged_tested_intervals <- merge_cherry_intervals(
+    gene_all_coordinates$start,
+    gene_all_coordinates$end
+  )
+  tested_region_bed <- data.frame(
+    chromosome = chromosome,
+    start = merged_tested_intervals$start,
+    end = merged_tested_intervals$end
+  )
+  tss_bed <- data.frame(
+    chromosome = gene_tss$chromosome,
+    start = gene_tss$start,
+    end = gene_tss$end,
+    name = paste0(gene_name, " TSS"),
+    score = 0,
+    strand = unique(gene_all_coordinates$strand)
+  )
+
+  regP_file <- file.path(cherry_browser_dir, paste0(gene_name, "_regP.bedgraph"))
+  tested_region_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_tested_region.bed")
+  )
+  tss_file <- file.path(cherry_browser_dir, paste0(gene_name, "_TSS.bed"))
+  gene_model_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_MANE_gene_model.bed")
+  )
+  config_file <- file.path(cherry_browser_dir, paste0(gene_name, "_tracks.ini"))
+  image_file <- file.path(cherry_browser_dir, paste0(gene_name, "_tracks.png"))
+
+  writeLines(
+    c(
+      "[regP]",
+      paste0("file = ", regP_file),
+      "file_type = bedgraph",
+      "title = regP",
+      "height = 4",
+      "color = #9075ab",
+      "negative_color = #D9AAB6",
+      "type = fill",
+      "min_value = 0",
+      "max_value = 6",
+      "",
+      "[regP zero]",
+      "file_type = hlines",
+      "y_values = 0",
+      "min_value = 0",
+      "max_value = 6",
+      "color = black",
+      "line_width = 1",
+      "show_data_range = false",
+      "overlay_previous = share-y",
+      "",
+      "[spacer]",
+      "height = 0.2",
+      "",
+      "[Tested region]",
+      paste0("file = ", tested_region_file),
+      "file_type = bed",
+      "title = Tested region",
+      "height = 0.2",
+      "color = #BDBDBD",
+      "border_color = none",
+      "labels = false",
+      "display = collapsed",
+      "",
+      "[spacer]",
+      "height = 0.2",
+      "",
+      "[TSS]",
+      paste0("file = ", tss_file),
+      "file_type = bed",
+      "title = TSS",
+      "height = 0.4",
+      "style = tssarrow",
+      "color = #E86F77",
+      "border_color = #C95059",
+      "labels = true",
+      "fontsize = 6",
+      "arrowhead_fraction = 0.008",
+      "display = collapsed",
+      "",
+      "[Gene body]",
+      paste0("file = ", gene_model_file),
+      "file_type = bed",
+      "title = Gene body",
+      "height = 0.4",
+      "style = UCSC",
+      "color = #5A5A5A",
+      "border_color = #333333",
+      "labels = false",
+      "display = collapsed",
+      "arrow_interval = 8",
+      "",
+      "[x-axis]",
+      "where = top",
+      "fontsize = 6",
+      "",
+      "[scale bar]",
+      "file_type = scalebar",
+      "where = right",
+      "height = 0.3",
+      "fontsize = 5",
+      "line_width = 1",
+      if (gene_name %in% c("ARG1", "ACTB")) "size = 1000" else NULL,
+      "color = black"
+    ),
+    config_file
+  )
+
+  if (gene_name %in% c("APOB", "TUBB")) {
+    tested_region_focus_padding <- 300
+    original_region_start <- min(gene_all_coordinates$start)-tested_region_focus_padding
+    original_region_end <- max(gene_all_coordinates$end)+tested_region_focus_padding
+  } else {
+    original_region_start <- min(
+      gene_all_coordinates$start, gene_tss$start, gene_model_exon_start
+    )
+    original_region_end <- max(
+      gene_all_coordinates$end, gene_tss$end, gene_model_exon_end
+    )
+  }
+  region_start <- original_region_start
+  region_end <- original_region_end
+  command_environment <- character(0)
+  compressed_break_positions <- numeric(0)
+
+  if (gene_name %in% c("ARG1", "ACTB")) {
+    compression_gaps <- data.frame(
+      start = head(merged_tested_intervals$end, -1),
+      end = tail(merged_tested_intervals$start, -1)
+    )
+    compression_gaps$width <- compression_gaps$end-compression_gaps$start
+    number_of_compressed_gaps <- if (gene_name == "ACTB") 3 else 2
+    compression_gaps <- compression_gaps[
+      order(compression_gaps$width, decreasing = TRUE)[
+        seq_len(number_of_compressed_gaps)
+      ],
+    ]
+    compression_gaps <- compression_gaps[order(compression_gaps$start),]
+    retained_gap_flank <- 750
+    protected_gene_start <- min(gene_model_exon_start, gene_tss$start)
+    protected_gene_end <- max(gene_model_exon_end, gene_tss$end)
+    removal_gaps <- do.call(rbind, lapply(seq_len(nrow(compression_gaps)), function(gap_i) {
+      gap_start <- compression_gaps$start[gap_i]
+      gap_end <- compression_gaps$end[gap_i]
+      removal_start <- gap_start+retained_gap_flank
+      removal_end <- gap_end-retained_gap_flank
+      overlaps_gene <- gap_start < protected_gene_end & gap_end > protected_gene_start
+      if (overlaps_gene) {
+        left_candidate <- c(
+          removal_start,
+          min(removal_end, protected_gene_start-retained_gap_flank)
+        )
+        right_candidate <- c(
+          max(removal_start, protected_gene_end+retained_gap_flank),
+          removal_end
+        )
+        candidates <- rbind(left_candidate, right_candidate)
+        candidate_width <- candidates[,2]-candidates[,1]
+        best_candidate <- which.max(candidate_width)
+        removal_start <- candidates[best_candidate,1]
+        removal_end <- candidates[best_candidate,2]
+      }
+      if (removal_end <= removal_start) {
+        stop(paste0("No empty sequence is available for the ", gene_name, " axis break"))
+      }
+      data.frame(start=removal_start, end=removal_end)
+    }))
+    if (gene_name == "ARG1") {
+      arg1_exon_order <- order(gene_model_exon_start, gene_model_exon_end)
+      arg1_exon_start <- gene_model_exon_start[arg1_exon_order]
+      arg1_exon_end <- gene_model_exon_end[arg1_exon_order]
+      arg1_intron_start <- head(arg1_exon_end, -1)
+      arg1_intron_end <- tail(arg1_exon_start, -1)
+      arg1_intron_width <- arg1_intron_end-arg1_intron_start
+      longest_arg1_intron <- which.max(arg1_intron_width)
+      gene_body_break_flank <- 250
+      gene_body_removal <- data.frame(
+        start = arg1_intron_start[longest_arg1_intron]+gene_body_break_flank,
+        end = arg1_intron_end[longest_arg1_intron]-gene_body_break_flank
+      )
+      if (gene_body_removal$end <= gene_body_removal$start) {
+        stop("The longest ARG1 intron is too short for a gene-body break")
+      }
+      removal_gaps <- rbind(removal_gaps, gene_body_removal)
+      removal_gaps <- removal_gaps[order(removal_gaps$start),]
+    }
+    compress_coordinate <- function(position) {
+      compressed <- position
+      for (gap_i in seq_len(nrow(removal_gaps))) {
+        removal_start <- removal_gaps$start[gap_i]
+        removal_end <- removal_gaps$end[gap_i]
+        removed_width <- removal_end-removal_start
+        inside_removal <- position > removal_start & position < removal_end
+        after_removal <- position >= removal_end
+        compressed[inside_removal] <- compressed[inside_removal]-
+          (position[inside_removal]-removal_start)
+        compressed[after_removal] <- compressed[after_removal]-removed_width
+      }
+      compressed
+    }
+
+    regP_bedgraph$start <- compress_coordinate(regP_bedgraph$start)
+    regP_bedgraph$end <- compress_coordinate(regP_bedgraph$end)
+    tested_region_bed$start <- compress_coordinate(tested_region_bed$start)
+    tested_region_bed$end <- compress_coordinate(tested_region_bed$end)
+    tss_bed$start <- compress_coordinate(tss_bed$start)
+    tss_bed$end <- compress_coordinate(tss_bed$end)
+    gene_model_exon_start <- compress_coordinate(gene_model_exon_start)
+    gene_model_exon_end <- compress_coordinate(gene_model_exon_end)
+    gene_model_cds_start <- compress_coordinate(gene_model_cds_start)
+    gene_model_cds_end <- compress_coordinate(gene_model_cds_end)
+    region_start <- compress_coordinate(original_region_start)
+    region_end <- compress_coordinate(original_region_end)
+    compressed_break_positions <- compress_coordinate(
+      (removal_gaps$start+removal_gaps$end)/2
+    )
+
+    if (gene_name == "ACTB") {
+      retained_section_start <- c(original_region_start, compression_gaps$end)
+      retained_section_end <- c(compression_gaps$start, original_region_end)
+      original_ticks <- round(
+        (retained_section_start+retained_section_end)/2000
+      )*1000
+    } else {
+      original_ticks <- sort(unique(c(
+        round(original_region_start/1000)*1000,
+        round(merged_tested_intervals$start/1000)*1000,
+        round(merged_tested_intervals$end/1000)*1000,
+        round(original_region_end/1000)*1000
+      )))
+    }
+    original_ticks <- original_ticks[
+      original_ticks >= original_region_start &
+        original_ticks <= original_region_end
+    ]
+    compressed_ticks <- compress_coordinate(original_ticks)
+    if (gene_name %in% c("ARG1", "ACTB") && length(compressed_ticks) > 1) {
+      minimum_tick_spacing <- if (gene_name == "ACTB") {
+        0.12*(region_end-region_start)
+      } else {
+        0.08*(region_end-region_start)
+      }
+      tick_groups <- cumsum(c(
+        1,
+        diff(compressed_ticks) >= minimum_tick_spacing
+      ))
+      tick_keep <- vapply(
+        unique(tick_groups),
+        function(group_id) which(tick_groups == group_id)[1],
+        integer(1)
+      )
+      tick_keep[length(tick_keep)] <- tail(
+        which(tick_groups == max(tick_groups)), 1
+      )
+      original_ticks <- original_ticks[tick_keep]
+      compressed_ticks <- compressed_ticks[tick_keep]
+    }
+    tick_labels <- format(original_ticks/1000, big.mark = ",", trim = TRUE)
+    tick_labels[length(tick_labels)] <- paste0(tail(tick_labels, 1), "~Kb")
+    command_environment <- c(
+      paste0("BROKEN_X_TICKS=", paste(compressed_ticks, collapse = ",")),
+      paste0("BROKEN_X_LABELS=", paste(tick_labels, collapse = ":"))
+    )
+  }
+
+  gene_model_exon_start <- round(gene_model_exon_start)
+  gene_model_exon_end <- round(gene_model_exon_end)
+  gene_model_cds_start <- round(gene_model_cds_start)
+  gene_model_cds_end <- round(gene_model_cds_end)
+  gene_model_exon_order <- order(gene_model_exon_start, gene_model_exon_end)
+  gene_model_exon_start <- gene_model_exon_start[gene_model_exon_order]
+  gene_model_exon_end <- gene_model_exon_end[gene_model_exon_order]
+  gene_model_start <- min(gene_model_exon_start)
+  gene_model_end <- max(gene_model_exon_end)
+  gene_model_bed <- data.frame(
+    chromosome = chromosome,
+    start = gene_model_start,
+    end = gene_model_end,
+    name = gene_name,
+    score = 0,
+    strand = gene_mane_transcript$strand,
+    thickStart = gene_model_cds_start,
+    thickEnd = gene_model_cds_end,
+    itemRgb = "90,90,90",
+    blockCount = length(gene_model_exon_start),
+    blockSizes = paste0(
+      paste(gene_model_exon_end-gene_model_exon_start, collapse = ","), ","
+    ),
+    blockStarts = paste0(
+      paste(gene_model_exon_start-gene_model_start, collapse = ","), ","
+    )
+  )
+
+  write.table(regP_bedgraph, regP_file, sep = "\t", quote = FALSE,
+              row.names = FALSE, col.names = FALSE)
+  write.table(tested_region_bed, tested_region_file, sep = "\t", quote = FALSE,
+              row.names = FALSE, col.names = FALSE)
+  write.table(tss_bed, tss_file, sep = "\t", quote = FALSE,
+              row.names = FALSE, col.names = FALSE)
+  write.table(gene_model_bed, gene_model_file, sep = "\t", quote = FALSE,
+              row.names = FALSE, col.names = FALSE)
+  region_padding <- ceiling((region_end-region_start)*0.02)
+  cherry_browser_specs[[gene_name]] <- list(
+    chromosome = chromosome,
+    region_start = region_start,
+    region_end = region_end,
+    region_padding = region_padding,
+    command_environment = command_environment,
+    compressed_break_positions = compressed_break_positions
+  )
+  command_output <- system2(
+    pygenometracks_python,
+    args = c(
+      shQuote(pygenometracks_wrapper),
+      "--tracks", shQuote(config_file),
+      "--region", paste0(chromosome, ":", region_start-region_padding,
+                         "-", region_end+region_padding),
+      "--outFileName", shQuote(image_file),
+      "--title", shQuote(gene_name),
+      "--width", "20",
+      "--height", "10",
+      "--dpi", "300",
+      "--fontSize", "6",
+      "--trackLabelFraction", "0.18"
+    ),
+    env = command_environment,
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  if (!is.null(attr(command_output, "status")) && attr(command_output, "status") != 0) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste(tail(clean_command_output, 40), collapse = "\n"))
+  }
+  if (!file.exists(image_file)) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste0(
+      "pyGenomeTracks did not create ", image_file, "\n",
+      paste(tail(clean_command_output, 40), collapse = "\n")
+    ))
+  }
+  panel_png <- png::readPNG(image_file)
+  panel_height <- dim(panel_png)[1]
+  panel_width <- dim(panel_png)[2]
+  panel_rgb <- panel_png[,,1:3, drop = FALSE]
+  dark_pixels <- apply(panel_rgb, c(1, 2), max) < 0.2
+
+  longest_true_run <- function(x) {
+    runs <- rle(x)
+    run_end <- cumsum(runs$lengths)
+    run_start <- run_end-runs$lengths+1
+    true_runs <- which(runs$values)
+    longest <- true_runs[which.max(runs$lengths[true_runs])]
+    c(run_start[longest], run_end[longest])
+  }
+
+  lower_rows <- seq.int(round(panel_height*0.65), round(panel_height*0.95))
+  coordinate_axis_row <- lower_rows[
+    which.max(rowSums(dark_pixels[lower_rows, , drop = FALSE]))
+  ]
+  plot_horizontal_range <- longest_true_run(dark_pixels[coordinate_axis_row,])
+  plot_right <- plot_horizontal_range[2]
+
+  upper_rows <- seq_len(round(panel_height*0.68))
+  left_columns <- seq_len(round(panel_width*0.10))
+  regP_axis_counts <- colSums(
+    dark_pixels[upper_rows, left_columns, drop = FALSE]
+  )
+  plot_left <- left_columns[which.max(regP_axis_counts)]
+  regP_vertical_range <- longest_true_run(dark_pixels[,plot_left])
+  plot_top <- regP_vertical_range[1]
+  regP_bottom <- regP_vertical_range[2]
+
+  tested_gray <-
+    abs(panel_png[,,1]-189/255) < 0.06 &
+    abs(panel_png[,,2]-189/255) < 0.06 &
+    abs(panel_png[,,3]-189/255) < 0.06
+  tested_search_rows <- seq.int(
+    regP_bottom+1,
+    round(panel_height*0.78)
+  )
+  tested_row_counts <- rowSums(
+    tested_gray[tested_search_rows, plot_left:plot_right, drop = FALSE]
+  )
+  tested_rows <- tested_search_rows[
+    tested_row_counts > 0.2*max(tested_row_counts)
+  ]
+  tss_red <-
+    abs(panel_png[,,1]-232/255) < 0.08 &
+    abs(panel_png[,,2]-111/255) < 0.08 &
+    abs(panel_png[,,3]-119/255) < 0.08
+  tss_search_rows <- seq.int(
+    max(tested_rows)+1,
+    round(panel_height*0.84)
+  )
+  tss_rows <- tss_search_rows[
+    rowSums(tss_red[tss_search_rows, plot_left:plot_right, drop = FALSE]) > 0
+  ]
+  gene_gray <-
+    abs(panel_png[,,1]-90/255) < 0.08 &
+    abs(panel_png[,,2]-90/255) < 0.08 &
+    abs(panel_png[,,3]-90/255) < 0.08
+  gene_search_rows <- seq.int(
+    max(tss_rows)+1,
+    round(panel_height*0.88)
+  )
+  gene_candidate_rows <- gene_search_rows[
+    rowSums(gene_gray[gene_search_rows, plot_left:plot_right, drop = FALSE]) > 0
+  ]
+  gene_row_groups <- cumsum(c(1, diff(gene_candidate_rows) > 1))
+  gene_rows <- gene_candidate_rows[
+    gene_row_groups == min(gene_row_groups)
+  ]
+  rows_below_gene <- seq.int(max(gene_rows)+4, coordinate_axis_row-1)
+  dark_rows_below_gene <- rows_below_gene[
+    rowSums(dark_pixels[
+      rows_below_gene, plot_left:plot_right, drop = FALSE
+    ]) > 0
+  ]
+  if (length(dark_rows_below_gene) > 0) {
+    dark_row_groups <- cumsum(c(1, diff(dark_rows_below_gene) > 1))
+    chromosome_label_rows <- dark_rows_below_gene[
+      dark_row_groups == min(dark_row_groups)
+    ]
+    plot_bottom <- floor(
+      (max(gene_rows)+min(chromosome_label_rows))/2
+    )
+  } else {
+    plot_bottom <- max(gene_rows)+6
+  }
+
+  box_width <- 4
+  panel_png[plot_top:(plot_top+box_width-1), plot_left:plot_right, 1:3] <- 0
+  panel_png[(plot_bottom-box_width+1):plot_bottom, plot_left:plot_right, 1:3] <- 0
+  panel_png[plot_top:plot_bottom, plot_left:(plot_left+box_width-1), 1:3] <- 0
+  panel_png[plot_top:plot_bottom, (plot_right-box_width+1):plot_right, 1:3] <- 0
+
+  if (gene_name %in% c("ARG1", "ACTB")) {
+    display_start <- region_start-region_padding
+    display_end <- region_end+region_padding
+    break_columns <- round(
+      plot_left+(compressed_break_positions-display_start)/
+        (display_end-display_start)*(plot_right-plot_left)
+    )
+
+    for (break_column in break_columns) {
+      for (slash_shift in c(-5, 5)) {
+        for (offset in -6:6) {
+          row_here <- coordinate_axis_row-offset
+          column_here <- break_column+slash_shift+offset%/%2
+          panel_png[
+            max(1, row_here-1):min(dim(panel_png)[1], row_here+1),
+            max(1, column_here-1):min(dim(panel_png)[2], column_here+1),
+            1:3
+          ] <- 0
+        }
+      }
+    }
+  }
+  png::writePNG(panel_png, image_file)
+  asset_image_file <- file.path(cherry_browser_asset_dir, basename(image_file))
+  copied_image <- file.copy(image_file, asset_image_file, overwrite = TRUE)
+  if (!isTRUE(copied_image) || !file.exists(asset_image_file)) {
+    stop(paste0("Could not save the generated browser image: ", asset_image_file))
+  }
+  cherry_browser_images <- c(cherry_browser_images, asset_image_file)
+}
+
+knitr::include_graphics(cherry_browser_images, rel_path = FALSE)
+```
+
+### cherry RegP synergy 
+
+```{r cherry-regP-synergy-pygenometracks, eval=T, echo=F, warning=F, results='asis', message=F, out.width='100%', fig.align='center'}
+cherry_synergy_browser_dir <- file.path(tempdir(), "cherry_synergy_pygenometracks")
+dir.create(cherry_synergy_browser_dir, showWarnings = FALSE, recursive = TRUE)
+cherry_synergy_asset_dir <- file.path(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes",
+  "fig7_generated_assets", "cherry_synergy"
+)
+dir.create(cherry_synergy_asset_dir, showWarnings = FALSE, recursive = TRUE)
+
+cherry_synergy_wrapper <- file.path(
+  cherry_synergy_browser_dir, "short_scalebar_ends_synergy.py"
+)
+synergy_wrapper_lines <- readLines(pygenometracks_wrapper)
+synergy_wrapper_lines <- sub(
+  "plot_axis.set_yticks\\(\\[0, 3, 6\\]\\)",
+  "plot_axis.set_yticks([-2, 0, 2, 4])",
+  synergy_wrapper_lines
+)
+writeLines(synergy_wrapper_lines, cherry_synergy_wrapper)
+
+cherry_synergy_images <- character(0)
+cherry_synergy_min <- -2
+cherry_synergy_max <- 4
+missing_cherry_regP_synergy <- setdiff(
+  row.names(cherry_coordinates), row.names(cherry_dose_synergy)
+)
+if (length(missing_cherry_regP_synergy) > 0) {
+  stop("RegP synergy is missing for one or more plotted cherry CREs")
+}
+cherry_coordinates$regPsynergy <- cherry_dose_synergy[
+  row.names(cherry_coordinates), "regP_synergy"
+]
+
+for (gene_name in cherry_gene_order) {
+  gene_coordinates <- cherry_coordinates[
+    cherry_coordinates$gene == gene_name, , drop = FALSE
+  ]
+  gene_coordinates <- gene_coordinates[order(gene_coordinates$midpoint),]
+  chromosome <- unique(gene_coordinates$chromosome)
+  browser_spec <- cherry_browser_specs[[gene_name]]
+
+  browser_breaks <- sort(unique(c(gene_coordinates$start, gene_coordinates$end)))
+  browser_segment_start <- head(browser_breaks, -1)
+  browser_segment_end <- tail(browser_breaks, -1)
+  browser_segment_midpoint <- (browser_segment_start+browser_segment_end)/2
+  browser_segment_synergy <- vapply(browser_segment_midpoint, function(position) {
+    covering_windows <- which(
+      gene_coordinates$start <= position & gene_coordinates$end > position
+    )
+    if (length(covering_windows) == 0) {
+      return(NA_real_)
+    }
+    mean(gene_coordinates$regPsynergy[covering_windows], na.rm = TRUE)
+  }, numeric(1))
+  covered_synergy_segments <- is.finite(browser_segment_synergy)
+  browser_segment_synergy <- browser_segment_synergy[
+    covered_synergy_segments
+  ]
+
+  regP_file <- file.path(cherry_browser_dir, paste0(gene_name, "_regP.bedgraph"))
+  synergy_bedgraph <- read.table(regP_file, sep = "\t", header = FALSE)
+  if (nrow(synergy_bedgraph) != length(browser_segment_synergy)) {
+    stop(paste0(
+      "RegP and synergy segment coordinates differ for ", gene_name
+    ))
+  }
+  synergy_bedgraph[,4] <- browser_segment_synergy
+  synergy_file <- file.path(
+    cherry_synergy_browser_dir, paste0(gene_name, "_regP_synergy.bedgraph")
+  )
+  write.table(
+    synergy_bedgraph, synergy_file, sep = "\t", quote = FALSE,
+    row.names = FALSE, col.names = FALSE
+  )
+
+  source_config_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_tracks.ini")
+  )
+  synergy_config_file <- file.path(
+    cherry_synergy_browser_dir, paste0(gene_name, "_synergy_tracks.ini")
+  )
+  synergy_config <- readLines(source_config_file)
+  synergy_config <- sub("^\\[regP\\]$", "[regPsynergy]", synergy_config)
+  synergy_config <- sub(
+    paste0("^file = ", regP_file, "$"),
+    paste0("file = ", synergy_file),
+    synergy_config
+  )
+  synergy_config <- sub("^title = regP$", "title = synergy", synergy_config)
+  synergy_config <- sub("^color = #9075ab$", "color = #8FA77E", synergy_config)
+  synergy_config <- sub(
+    "^negative_color = #D9AAB6$",
+    "negative_color = #F4E1A1",
+    synergy_config
+  )
+  synergy_config <- sub(
+    "^min_value = 0$", paste0("min_value = ", cherry_synergy_min),
+    synergy_config
+  )
+  synergy_config <- sub(
+    "^max_value = 6$", paste0("max_value = ", cherry_synergy_max),
+    synergy_config
+  )
+  writeLines(synergy_config, synergy_config_file)
+
+  synergy_image_file <- file.path(
+    cherry_synergy_browser_dir, paste0(gene_name, "_synergy_tracks.png")
+  )
+  command_output <- system2(
+    pygenometracks_python,
+    args = c(
+      shQuote(cherry_synergy_wrapper),
+      "--tracks", shQuote(synergy_config_file),
+      "--region", paste0(
+        chromosome, ":",
+        browser_spec$region_start-browser_spec$region_padding, "-",
+        browser_spec$region_end+browser_spec$region_padding
+      ),
+      "--outFileName", shQuote(synergy_image_file),
+      "--title", shQuote(gene_name),
+      "--width", "20",
+      "--height", "10",
+      "--dpi", "300",
+      "--fontSize", "6",
+      "--trackLabelFraction", "0.18"
+    ),
+    env = browser_spec$command_environment,
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  if (!is.null(attr(command_output, "status")) && attr(command_output, "status") != 0) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste(tail(clean_command_output, 40), collapse = "\n"))
+  }
+  if (!file.exists(synergy_image_file)) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste0(
+      "pyGenomeTracks did not create ", synergy_image_file, "\n",
+      paste(tail(clean_command_output, 40), collapse = "\n")
+    ))
+  }
+
+  panel_png <- png::readPNG(synergy_image_file)
+  panel_height <- dim(panel_png)[1]
+  panel_width <- dim(panel_png)[2]
+  panel_rgb <- panel_png[,,1:3, drop = FALSE]
+  dark_pixels <- apply(panel_rgb, c(1, 2), max) < 0.2
+
+  lower_rows <- seq.int(round(panel_height*0.65), round(panel_height*0.95))
+  coordinate_axis_row <- lower_rows[
+    which.max(rowSums(dark_pixels[lower_rows, , drop = FALSE]))
+  ]
+  plot_horizontal_range <- longest_true_run(dark_pixels[coordinate_axis_row,])
+  plot_right <- plot_horizontal_range[2]
+
+  upper_rows <- seq_len(round(panel_height*0.68))
+  left_columns <- seq_len(round(panel_width*0.10))
+  signal_axis_counts <- colSums(
+    dark_pixels[upper_rows, left_columns, drop = FALSE]
+  )
+  plot_left <- left_columns[which.max(signal_axis_counts)]
+  signal_vertical_range <- longest_true_run(dark_pixels[,plot_left])
+  plot_top <- signal_vertical_range[1]
+  signal_bottom <- signal_vertical_range[2]
+
+  tested_gray <-
+    abs(panel_png[,,1]-189/255) < 0.06 &
+    abs(panel_png[,,2]-189/255) < 0.06 &
+    abs(panel_png[,,3]-189/255) < 0.06
+  tested_search_rows <- seq.int(signal_bottom+1, round(panel_height*0.78))
+  tested_row_counts <- rowSums(
+    tested_gray[tested_search_rows, plot_left:plot_right, drop = FALSE]
+  )
+  tested_rows <- tested_search_rows[
+    tested_row_counts > 0.2*max(tested_row_counts)
+  ]
+  tss_red <-
+    abs(panel_png[,,1]-232/255) < 0.08 &
+    abs(panel_png[,,2]-111/255) < 0.08 &
+    abs(panel_png[,,3]-119/255) < 0.08
+  tss_search_rows <- seq.int(max(tested_rows)+1, round(panel_height*0.84))
+  tss_rows <- tss_search_rows[
+    rowSums(tss_red[tss_search_rows, plot_left:plot_right, drop = FALSE]) > 0
+  ]
+  gene_gray <-
+    abs(panel_png[,,1]-90/255) < 0.08 &
+    abs(panel_png[,,2]-90/255) < 0.08 &
+    abs(panel_png[,,3]-90/255) < 0.08
+  gene_search_rows <- seq.int(max(tss_rows)+1, round(panel_height*0.88))
+  gene_candidate_rows <- gene_search_rows[
+    rowSums(gene_gray[gene_search_rows, plot_left:plot_right, drop = FALSE]) > 0
+  ]
+  gene_row_groups <- cumsum(c(1, diff(gene_candidate_rows) > 1))
+  gene_rows <- gene_candidate_rows[
+    gene_row_groups == min(gene_row_groups)
+  ]
+  rows_below_gene <- seq.int(max(gene_rows)+4, coordinate_axis_row-1)
+  dark_rows_below_gene <- rows_below_gene[
+    rowSums(dark_pixels[
+      rows_below_gene, plot_left:plot_right, drop = FALSE
+    ]) > 0
+  ]
+  if (length(dark_rows_below_gene) > 0) {
+    dark_row_groups <- cumsum(c(1, diff(dark_rows_below_gene) > 1))
+    chromosome_label_rows <- dark_rows_below_gene[
+      dark_row_groups == min(dark_row_groups)
+    ]
+    plot_bottom <- floor((max(gene_rows)+min(chromosome_label_rows))/2)
+  } else {
+    plot_bottom <- max(gene_rows)+6
+  }
+
+  box_width <- 4
+  panel_png[plot_top:(plot_top+box_width-1), plot_left:plot_right, 1:3] <- 0
+  panel_png[(plot_bottom-box_width+1):plot_bottom, plot_left:plot_right, 1:3] <- 0
+  panel_png[plot_top:plot_bottom, plot_left:(plot_left+box_width-1), 1:3] <- 0
+  panel_png[plot_top:plot_bottom, (plot_right-box_width+1):plot_right, 1:3] <- 0
+
+  if (gene_name %in% c("ARG1", "ACTB")) {
+    display_start <- browser_spec$region_start-browser_spec$region_padding
+    display_end <- browser_spec$region_end+browser_spec$region_padding
+    break_columns <- round(
+      plot_left+(browser_spec$compressed_break_positions-display_start)/
+        (display_end-display_start)*(plot_right-plot_left)
+    )
+    for (break_column in break_columns) {
+      for (slash_shift in c(-5, 5)) {
+        for (offset in -6:6) {
+          row_here <- coordinate_axis_row-offset
+          column_here <- break_column+slash_shift+offset%/%2
+          panel_png[
+            max(1, row_here-1):min(dim(panel_png)[1], row_here+1),
+            max(1, column_here-1):min(dim(panel_png)[2], column_here+1),
+            1:3
+          ] <- 0
+        }
+      }
+    }
+  }
+  png::writePNG(panel_png, synergy_image_file)
+  asset_image_file <- file.path(
+    cherry_synergy_asset_dir, basename(synergy_image_file)
+  )
+  copied_image <- file.copy(synergy_image_file, asset_image_file, overwrite = TRUE)
+  if (!isTRUE(copied_image) || !file.exists(asset_image_file)) {
+    stop(paste0("Could not save the generated browser image: ", asset_image_file))
+  }
+  cherry_synergy_images <- c(cherry_synergy_images, asset_image_file)
+}
+
+knitr::include_graphics(cherry_synergy_images, rel_path = FALSE)
+```
+
+### cherry RegP and synergy combined
+
+```{r cherry-regP-synergy-combined-pygenometracks, eval=T, echo=F, warning=F, results='asis', message=F, out.width='90%', fig.align='center'}
+cherry_combined_browser_dir <- file.path(
+  tempdir(), "cherry_regP_synergy_combined_pygenometracks"
+)
+dir.create(cherry_combined_browser_dir, showWarnings = FALSE, recursive = TRUE)
+cherry_combined_asset_dir <- file.path(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes",
+  "fig7_generated_assets", "cherry_regP_synergy_combined"
+)
+dir.create(cherry_combined_asset_dir, showWarnings = FALSE, recursive = TRUE)
+
+cherry_combined_wrapper <- file.path(
+  cherry_combined_browser_dir, "short_scalebar_ends_combined.py"
+)
+combined_wrapper_lines <- readLines(pygenometracks_wrapper)
+combined_wrapper_lines <- c(
+  "from matplotlib import rcParams",
+  "rcParams['font.family'] = 'DejaVu Sans'",
+  "rcParams['font.size'] = 12",
+  "rcParams['axes.titlesize'] = 12",
+  "rcParams['axes.labelsize'] = 12",
+  "rcParams['xtick.labelsize'] = 12",
+  "rcParams['ytick.labelsize'] = 12",
+  "rcParams['figure.titlesize'] = 12",
+  "rcParams['pdf.fonttype'] = 42",
+  "rcParams['ps.fonttype'] = 42",
+  combined_wrapper_lines
+)
+combined_tick_line <- grep(
+  "plot_axis.set_yticks([0, 3, 6])",
+  combined_wrapper_lines,
+  fixed = TRUE
+)
+if (length(combined_tick_line) != 1) {
+  stop("Could not identify the pyGenomeTracks y-axis tick definition")
+}
+combined_wrapper_lines <- append(
+  combined_wrapper_lines[-combined_tick_line],
+  c(
+    "    track_title = str(self.properties.get('title', '')).lower()",
+    "    tick_values = [-2, 0, 2, 4] if track_title == 'synergy' else [0, 3, 6]",
+    "    plot_axis.set_yticks(tick_values)"
+  ),
+  after = combined_tick_line-1
+)
+combined_main_line <- grep(
+  "from pygenometracks.plotTracks import main",
+  combined_wrapper_lines,
+  fixed = TRUE
+)
+if (length(combined_main_line) != 1) {
+  stop("Could not identify the pyGenomeTracks main import")
+}
+combined_wrapper_lines <- append(
+  combined_wrapper_lines[-combined_main_line],
+  c(
+    "from matplotlib.ticker import MaxNLocator",
+    "native_broken_x_axis_plot = XAxisTrack.plot",
+    "def vector_break_x_axis_plot(self, ax, chrom_region, region_start, region_end):",
+    "    native_broken_x_axis_plot(self, ax, chrom_region, region_start, region_end)",
+    "    if not os.environ.get('BROKEN_X_TICKS', ''):",
+    "        ax.xaxis.set_major_locator(MaxNLocator(nbins=4, min_n_ticks=3))",
+    "    break_positions = os.environ.get('BROKEN_X_BREAKS', '')",
+    "    if break_positions:",
+    "        axis_y = 0.2 if self.properties['where'] == 'top' else 0.9",
+    "        x_span = ax.get_xlim()[1] - ax.get_xlim()[0]",
+    "        slash_half_width = 0.0018 * x_span",
+    "        slash_gap = 0.0032 * x_span",
+    "        for value in break_positions.split(','):",
+    "            position = float(value)",
+    "            for offset in (-slash_gap, slash_gap):",
+    "                ax.plot(",
+    "                    [position + offset - slash_half_width, position + offset + slash_half_width],",
+    "                    [axis_y - 0.055, axis_y + 0.055],",
+    "                    color='black', linewidth=1.0, clip_on=False,",
+    "                    transform=ax.get_xaxis_transform(), zorder=20",
+    "                )",
+    "XAxisTrack.plot = vector_break_x_axis_plot",
+    "from pygenometracks.plotTracks import main"
+  ),
+  after = combined_main_line-1
+)
+writeLines(combined_wrapper_lines, cherry_combined_wrapper)
+
+cherry_combined_images <- character(0)
+for (gene_name in cherry_gene_order) {
+  browser_spec <- cherry_browser_specs[[gene_name]]
+  chromosome <- browser_spec$chromosome
+  regP_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_regP.bedgraph")
+  )
+  synergy_file <- file.path(
+    cherry_synergy_browser_dir,
+    paste0(gene_name, "_regP_synergy.bedgraph")
+  )
+  tested_region_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_tested_region.bed")
+  )
+  tss_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_TSS.bed")
+  )
+  gene_model_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_MANE_gene_model.bed")
+  )
+  source_config_file <- file.path(
+    cherry_browser_dir, paste0(gene_name, "_tracks.ini")
+  )
+  if (!all(file.exists(c(
+    regP_file, synergy_file, tested_region_file, tss_file,
+    gene_model_file, source_config_file
+  )))) {
+    stop(paste0("The source browser files are missing for ", gene_name))
+  }
+
+  combined_regP_file <- regP_file
+  combined_synergy_file <- synergy_file
+  combined_tested_region_file <- tested_region_file
+  combined_tss_file <- tss_file
+  combined_gene_model_file <- gene_model_file
+  combined_region_start <- browser_spec$region_start
+  combined_region_end <- browser_spec$region_end
+  combined_region_padding <- browser_spec$region_padding
+  combined_break_positions <- browser_spec$compressed_break_positions
+  combined_command_environment <- browser_spec$command_environment
+
+  if (gene_name == "ARG1") {
+    arg1_gene_model <- read.table(
+      gene_model_file,
+      sep = "\t", header = FALSE, quote = "", comment.char = "",
+      stringsAsFactors = FALSE, fill = TRUE
+    )
+    if (nrow(arg1_gene_model) != 1 || ncol(arg1_gene_model) < 12) {
+      stop("Expected one BED12 ARG1 gene model for the combined-track break")
+    }
+    arg1_block_sizes <- as.numeric(strsplit(
+      sub(",+$", "", arg1_gene_model[1, 11]), ",", fixed = TRUE
+    )[[1]])
+    arg1_block_starts <- as.numeric(strsplit(
+      sub(",+$", "", arg1_gene_model[1, 12]), ",", fixed = TRUE
+    )[[1]])
+    arg1_exon_start <- arg1_gene_model[1, 2]+arg1_block_starts
+    arg1_exon_end <- arg1_exon_start+arg1_block_sizes
+    arg1_intron_start <- head(arg1_exon_end, -1)
+    arg1_intron_end <- tail(arg1_exon_start, -1)
+    arg1_tested_intervals <- read.table(
+      tested_region_file,
+      sep = "\t", header = FALSE, stringsAsFactors = FALSE
+    )
+
+    arg1_untested_intron_segments <- do.call(
+      rbind,
+      lapply(seq_along(arg1_intron_start), function(intron_i) {
+        intron_start <- arg1_intron_start[intron_i]
+        intron_end <- arg1_intron_end[intron_i]
+        overlapping_tested <- arg1_tested_intervals[
+          arg1_tested_intervals[[2]] < intron_end &
+            arg1_tested_intervals[[3]] > intron_start,
+          , drop = FALSE
+        ]
+        boundaries <- sort(unique(c(
+          intron_start,
+          intron_end,
+          pmax(intron_start, overlapping_tested[[2]]),
+          pmin(intron_end, overlapping_tested[[3]])
+        )))
+        if (length(boundaries) < 2) return(NULL)
+        segment_start <- head(boundaries, -1)
+        segment_end <- tail(boundaries, -1)
+        segment_midpoint <- (segment_start+segment_end)/2
+        overlaps_tested <- vapply(segment_midpoint, function(position) {
+          any(
+            arg1_tested_intervals[[2]] <= position &
+              arg1_tested_intervals[[3]] > position
+          )
+        }, logical(1))
+        data.frame(
+          start = segment_start[!overlaps_tested],
+          end = segment_end[!overlaps_tested]
+        )
+      })
+    )
+    # Compress every remaining sizeable untested ARG1 intron, rather than only
+    # the single longest one, so the gene body is visibly shortened while all
+    # exons and tested CREs remain at full width.
+    arg1_extra_break_flank <- 100
+    arg1_untested_intron_segments$width <-
+      arg1_untested_intron_segments$end-
+      arg1_untested_intron_segments$start
+    arg1_untested_intron_segments <- arg1_untested_intron_segments[
+      arg1_untested_intron_segments$width > 2*arg1_extra_break_flank,
+      , drop = FALSE
+    ]
+    if (nrow(arg1_untested_intron_segments) == 0) {
+      stop("No additional untested ARG1 intronic segment is available")
+    }
+    arg1_extra_removals <- data.frame(
+      start = arg1_untested_intron_segments$start+arg1_extra_break_flank,
+      end = arg1_untested_intron_segments$end-arg1_extra_break_flank
+    )
+    arg1_extra_removals <- arg1_extra_removals[
+      order(arg1_extra_removals$start), , drop = FALSE
+    ]
+    compress_arg1_combined <- function(position) {
+      compressed <- position
+      for (removal_i in seq_len(nrow(arg1_extra_removals))) {
+        removal_start <- arg1_extra_removals$start[removal_i]
+        removal_end <- arg1_extra_removals$end[removal_i]
+        removed_width <- removal_end-removal_start
+        inside_removal <- position > removal_start & position < removal_end
+        after_removal <- position >= removal_end
+        compressed[inside_removal] <- compressed[inside_removal]-
+          (position[inside_removal]-removal_start)
+        compressed[after_removal] <-
+          compressed[after_removal]-removed_width
+      }
+      compressed
+    }
+
+    compress_interval_file <- function(source_file, destination_file) {
+      interval_data <- read.table(
+        source_file,
+        sep = "\t", header = FALSE, quote = "", comment.char = "",
+        stringsAsFactors = FALSE, fill = TRUE
+      )
+      interval_data[[2]] <- compress_arg1_combined(interval_data[[2]])
+      interval_data[[3]] <- compress_arg1_combined(interval_data[[3]])
+      interval_data <- interval_data[
+        interval_data[[3]] > interval_data[[2]],
+        , drop = FALSE
+      ]
+      write.table(
+        interval_data, destination_file, sep = "\t", quote = FALSE,
+        row.names = FALSE, col.names = FALSE
+      )
+    }
+
+    combined_regP_file <- file.path(
+      cherry_combined_browser_dir, "ARG1_regP_extra_break.bedgraph"
+    )
+    combined_synergy_file <- file.path(
+      cherry_combined_browser_dir, "ARG1_synergy_extra_break.bedgraph"
+    )
+    combined_tested_region_file <- file.path(
+      cherry_combined_browser_dir, "ARG1_tested_region_extra_break.bed"
+    )
+    combined_tss_file <- file.path(
+      cherry_combined_browser_dir, "ARG1_TSS_extra_break.bed"
+    )
+    combined_gene_model_file <- file.path(
+      cherry_combined_browser_dir, "ARG1_gene_model_extra_break.bed"
+    )
+    compress_interval_file(regP_file, combined_regP_file)
+    compress_interval_file(synergy_file, combined_synergy_file)
+    compress_interval_file(
+      tested_region_file, combined_tested_region_file
+    )
+    compress_interval_file(tss_file, combined_tss_file)
+
+    compressed_arg1_exon_start <- compress_arg1_combined(arg1_exon_start)
+    compressed_arg1_exon_end <- compress_arg1_combined(arg1_exon_end)
+    compressed_arg1_model_start <- min(compressed_arg1_exon_start)
+    compressed_arg1_model_end <- max(compressed_arg1_exon_end)
+    arg1_gene_model[1, 2] <- compressed_arg1_model_start
+    arg1_gene_model[1, 3] <- compressed_arg1_model_end
+    arg1_gene_model[1, 7] <- compress_arg1_combined(arg1_gene_model[1, 7])
+    arg1_gene_model[1, 8] <- compress_arg1_combined(arg1_gene_model[1, 8])
+    arg1_gene_model[1, 10] <- length(compressed_arg1_exon_start)
+    arg1_gene_model[1, 11] <- paste0(
+      paste(
+        compressed_arg1_exon_end-compressed_arg1_exon_start,
+        collapse = ","
+      ),
+      ","
+    )
+    arg1_gene_model[1, 12] <- paste0(
+      paste(
+        compressed_arg1_exon_start-compressed_arg1_model_start,
+        collapse = ","
+      ),
+      ","
+    )
+    write.table(
+      arg1_gene_model, combined_gene_model_file,
+      sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE
+    )
+
+    combined_region_start <- compress_arg1_combined(browser_spec$region_start)
+    combined_region_end <- compress_arg1_combined(browser_spec$region_end)
+    combined_region_padding <- ceiling(
+      (combined_region_end-combined_region_start)*0.02
+    )
+    combined_break_positions <- sort(unique(c(
+      compress_arg1_combined(browser_spec$compressed_break_positions),
+      compress_arg1_combined(
+        (arg1_extra_removals$start+arg1_extra_removals$end)/2
+      )
+    )))
+    tick_environment_index <- grep(
+      "^BROKEN_X_TICKS=", combined_command_environment
+    )
+    if (length(tick_environment_index) == 1) {
+      combined_tick_positions <- as.numeric(strsplit(
+        sub(
+          "^BROKEN_X_TICKS=", "",
+          combined_command_environment[tick_environment_index]
+        ),
+        ",", fixed = TRUE
+      )[[1]])
+      combined_command_environment[tick_environment_index] <- paste0(
+        "BROKEN_X_TICKS=",
+        paste(compress_arg1_combined(combined_tick_positions), collapse = ",")
+      )
+    }
+  }
+
+  combined_tss_label_file <- file.path(
+    cherry_combined_browser_dir, paste0(gene_name, "_TSS_only.bed")
+  )
+  combined_tss_data <- read.table(
+    combined_tss_file,
+    sep = "\t", header = FALSE, quote = "", comment.char = "",
+    stringsAsFactors = FALSE, fill = TRUE
+  )
+  combined_tss_data[[4]] <- "TSS"
+  write.table(
+    combined_tss_data, combined_tss_label_file,
+    sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE
+  )
+  combined_tss_file <- combined_tss_label_file
+
+  source_config <- readLines(source_config_file)
+  downstream_start <- match("[Tested region]", source_config)
+  if (is.na(downstream_start)) {
+    stop(paste0("The tested-region track is missing for ", gene_name))
+  }
+  regP_config <- source_config[seq_len(downstream_start-1)]
+  downstream_config <- source_config[downstream_start:length(source_config)]
+  regP_config <- sub("^title = regP$", "title = RegP", regP_config)
+  regP_config <- sub("^fontsize = .*$", "fontsize = 12", regP_config)
+  downstream_config <- sub(
+    "^fontsize = .*$", "fontsize = 12", downstream_config
+  )
+  downstream_config <- sub(
+    "^title = Tested region$", "title = Tested CREs", downstream_config
+  )
+  downstream_config <- sub("^title = TSS$", "title =", downstream_config)
+  downstream_config <- sub(
+    "^title = Gene body$", "title =", downstream_config
+  )
+  regP_config <- sub(
+    paste0("file = ", regP_file),
+    paste0("file = ", combined_regP_file),
+    regP_config,
+    fixed = TRUE
+  )
+  downstream_config <- sub(
+    paste0("file = ", tested_region_file),
+    paste0("file = ", combined_tested_region_file),
+    downstream_config,
+    fixed = TRUE
+  )
+  downstream_config <- sub(
+    paste0("file = ", tss_file),
+    paste0("file = ", combined_tss_file),
+    downstream_config,
+    fixed = TRUE
+  )
+  downstream_config <- sub(
+    paste0("file = ", gene_model_file),
+    paste0("file = ", combined_gene_model_file),
+    downstream_config,
+    fixed = TRUE
+  )
+  synergy_config <- c(
+    "[synergy]",
+    paste0("file = ", combined_synergy_file),
+    "file_type = bedgraph",
+    "title = Synergy",
+    "height = 4",
+    "color = #8FA77E",
+    "negative_color = #F4E1A1",
+    "type = fill",
+    "min_value = -2",
+    "max_value = 4",
+    "",
+    "[synergy zero]",
+    "file_type = hlines",
+    "y_values = 0",
+    "min_value = -2",
+    "max_value = 4",
+    "color = black",
+    "line_width = 1",
+    "show_data_range = false",
+    "overlay_previous = share-y",
+    "",
+    "[spacer]",
+    "height = 0.2",
+    ""
+  )
+  combined_config_file <- file.path(
+    cherry_combined_browser_dir,
+    paste0(gene_name, "_combined_tracks.ini")
+  )
+  writeLines(
+    c(regP_config, synergy_config, downstream_config),
+    combined_config_file
+  )
+
+  combined_image_file <- file.path(
+    cherry_combined_browser_dir,
+    paste0(gene_name, "_combined_tracks.pdf")
+  )
+  if (length(combined_break_positions) > 0) {
+    combined_command_environment <- c(
+      combined_command_environment,
+      paste0(
+        "BROKEN_X_BREAKS=",
+        paste(combined_break_positions, collapse = ",")
+      )
+    )
+  }
+  command_output <- system2(
+    pygenometracks_python,
+    args = c(
+      shQuote(cherry_combined_wrapper),
+      "--tracks", shQuote(combined_config_file),
+      "--region", paste0(
+        chromosome, ":",
+        combined_region_start-combined_region_padding, "-",
+        combined_region_end+combined_region_padding
+      ),
+      "--outFileName", shQuote(combined_image_file),
+      "--title", shQuote(gene_name),
+      "--width", "14.666667",
+      "--height", "12",
+      "--fontSize", "12",
+      "--trackLabelFraction", "0.18"
+    ),
+    env = combined_command_environment,
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  if (!is.null(attr(command_output, "status")) &&
+      attr(command_output, "status") != 0) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste(tail(clean_command_output, 40), collapse = "\n"))
+  }
+  if (!file.exists(combined_image_file)) {
+    clean_command_output <- unlist(strsplit(command_output, "\r", fixed = TRUE))
+    stop(paste0(
+      "pyGenomeTracks did not create ", combined_image_file, "\n",
+      paste(tail(clean_command_output, 40), collapse = "\n")
+    ))
+  }
+
+  asset_image_file <- file.path(
+    cherry_combined_asset_dir, basename(combined_image_file)
+  )
+  copied_image <- file.copy(
+    combined_image_file, asset_image_file, overwrite = TRUE
+  )
+  if (!isTRUE(copied_image) || !file.exists(asset_image_file)) {
+    stop(paste0("Could not save the generated browser image: ", asset_image_file))
+  }
+  cherry_combined_images <- c(cherry_combined_images, asset_image_file)
+}
+
+knitr::include_graphics(cherry_combined_images, rel_path = FALSE)
+```
+
+### CRE feature
+
+```{r cre-feature-n10-load, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+cre_feature_n10_file <- paste0(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes/",
+  "pdf_25_Fig7_endoGenes_CRE_features_N10.tsv"
+)
+cre_feature_n10 <- read.table(
+  cre_feature_n10_file,
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+
+stopifnot(
+  all(c(
+    "gene_id",
+    "group",
+    "outcome",
+    "FxH_affinity_link_score_weighted_mean",
+    "FxH_affinity_link_score_weighted_sum",
+    "F_plus_H_binding_sites_link_score_weighted_mean",
+    "F_plus_H_binding_sites_link_score_weighted_sum",
+    "non_FH_TF_motif_count_link_score_weighted_mean"
+  ) %in% colnames(cre_feature_n10)),
+  all(is.finite(cre_feature_n10$FxH_affinity_link_score_weighted_mean)),
+  all(cre_feature_n10$FxH_affinity_link_score_weighted_mean > 0),
+  all(is.finite(cre_feature_n10$FxH_affinity_link_score_weighted_sum)),
+  all(cre_feature_n10$FxH_affinity_link_score_weighted_sum > 0),
+  all(is.finite(
+    cre_feature_n10$F_plus_H_binding_sites_link_score_weighted_mean
+  )),
+  all(is.finite(
+    cre_feature_n10$F_plus_H_binding_sites_link_score_weighted_sum
+  )),
+  all(is.finite(
+    cre_feature_n10$non_FH_TF_motif_count_link_score_weighted_mean
+  ))
+)
+
+cre_feature_n10$group <- factor(
+  cre_feature_n10$group,
+  levels = c("bottom", "top"),
+  labels = c("Bottom 10%", "Top 10%")
+)
+cre_feature_n10$outcome <- factor(
+  cre_feature_n10$outcome,
+  levels = c("regP", "HepG2 synergy")
+)
+
+cre_feature_ec50_n10_file <- paste0(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes/",
+  "pdf_25_Fig7_endoGenes_CRE_features_EC50_N10.tsv"
+)
+cre_feature_ec50_n10 <- read.table(
+  cre_feature_ec50_n10_file,
+  header = TRUE,
+  sep = "\t",
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+stopifnot(
+  all(c(
+    "gene_id",
+    "group",
+    "outcome",
+    "EC50",
+    "FxH_affinity_link_score_weighted_mean",
+    "FxH_affinity_link_score_weighted_sum",
+    "F_plus_H_binding_sites_link_score_weighted_mean",
+    "F_plus_H_binding_sites_link_score_weighted_sum",
+    "non_FH_TF_motif_count_link_score_weighted_mean"
+  ) %in% colnames(cre_feature_ec50_n10)),
+  all(is.finite(
+    cre_feature_ec50_n10$FxH_affinity_link_score_weighted_mean
+  )),
+  all(cre_feature_ec50_n10$FxH_affinity_link_score_weighted_mean > 0),
+  all(is.finite(
+    cre_feature_ec50_n10$FxH_affinity_link_score_weighted_sum
+  )),
+  all(cre_feature_ec50_n10$FxH_affinity_link_score_weighted_sum > 0),
+  all(is.finite(
+    cre_feature_ec50_n10$F_plus_H_binding_sites_link_score_weighted_mean
+  )),
+  all(is.finite(
+    cre_feature_ec50_n10$F_plus_H_binding_sites_link_score_weighted_sum
+  )),
+  all(is.finite(
+    cre_feature_ec50_n10$non_FH_TF_motif_count_link_score_weighted_mean
+  ))
+)
+cre_feature_ec50_n10$group <- factor(
+  cre_feature_ec50_n10$group,
+  levels = c("bottom", "top"),
+  labels = c("Bottom 10%", "Top 10%")
+)
+cre_feature_ec50_n10$outcome <- factor(
+  cre_feature_ec50_n10$outcome,
+  levels = "EC50"
+)
+
+cre_feature_all_columns <- c(
+  "gene_id", "group", "outcome",
+  "FxH_affinity_link_score_weighted_mean",
+  "FxH_affinity_link_score_weighted_sum",
+  "F_plus_H_binding_sites_link_score_weighted_mean",
+  "F_plus_H_binding_sites_link_score_weighted_sum",
+  "non_FH_TF_motif_count_link_score_weighted_mean"
+)
+cre_feature_all_n10 <- rbind(
+  cre_feature_n10[, cre_feature_all_columns],
+  cre_feature_ec50_n10[, cre_feature_all_columns]
+)
+cre_feature_all_n10$group <- factor(
+  cre_feature_all_n10$group,
+  levels = c("Bottom 10%", "Top 10%")
+)
+cre_feature_all_n10$outcome <- factor(
+  cre_feature_all_n10$outcome,
+  levels = c("regP", "HepG2 synergy", "EC50")
+)
+cre_feature_group_colors <- c(
+  "Bottom 10%" = "#B8B2BC",
+  "Top 10%" = "#B9A6CB"
+)
+
+cre_feature_test_columns <- c(
+  "FxH_affinity_link_score_weighted_mean",
+  "FxH_affinity_link_score_weighted_sum",
+  "F_plus_H_binding_sites_link_score_weighted_mean",
+  "F_plus_H_binding_sites_link_score_weighted_sum",
+  "non_FH_TF_motif_count_link_score_weighted_mean"
+)
+cre_feature_tests <- expand.grid(
+  value_column = cre_feature_test_columns,
+  outcome = levels(cre_feature_all_n10$outcome),
+  stringsAsFactors = FALSE
+)
+cre_feature_tests$p_value <- vapply(
+  seq_len(nrow(cre_feature_tests)),
+  function(i) {
+    panel_data <- cre_feature_all_n10[
+      cre_feature_all_n10$outcome == cre_feature_tests$outcome[i],
+    ]
+    wilcox.test(
+      panel_data[[cre_feature_tests$value_column[i]]]~panel_data$group,
+      exact = FALSE
+    )$p.value
+  },
+  numeric(1)
+)
+cre_feature_tests$adjusted_p <- p.adjust(
+  cre_feature_tests$p_value,
+  method = "BH"
+)
+
+plot_cre_feature_boxplots <- function(
+  data,
+  value_column,
+  y_label,
+  figure_title,
+  log_y = FALSE,
+  affinity_energy_axis = FALSE,
+  energy_ticks = c(-20, -21, -22)
+) {
+  outcome_levels <- levels(data$outcome)
+  group_levels <- levels(data$group)
+  box_width <- 0.58
+  old_par <- par(
+    mfrow = c(1, length(outcome_levels)),
+    mar = c(3.8, 3.6, 2.2, 0.7),
+    oma = c(0, 0.2, 1.1, 0)
+  )
+  # Base R silently sets cex = 0.66 for layouts with three columns.
+  # Reset it so three-panel and two-panel figures use identical sizing.
+  par(cex = 1)
+  on.exit(par(old_par))
+
+  for (outcome_name in outcome_levels) {
+    panel_data <- droplevels(data[data$outcome == outcome_name,])
+    panel_values <- panel_data[[value_column]]
+    panel_group_colors <- cre_feature_group_colors
+    if (outcome_name == "HepG2 synergy") {
+      panel_group_colors["Top 10%"] <- "#B7D0B3"
+    }
+    if (outcome_name == "EC50") {
+      panel_group_colors["Top 10%"] <- "#F6BE8A"
+    }
+    if (log_y && any(panel_values <= 0, na.rm = TRUE)) {
+      stop(value_column, " contains non-positive values")
+    }
+
+    finite_values <- panel_values[is.finite(panel_values)]
+    if (log_y) {
+      transformed_range <- range(log10(finite_values))
+      transformed_span <- diff(transformed_range)
+      if (transformed_span == 0) transformed_span <- 1
+      y_limits <- 10^c(
+        transformed_range[1],
+        transformed_range[2]+0.38*transformed_span
+      )
+      bracket_y <- 10^(transformed_range[2]+0.12*transformed_span)
+      bracket_tip_y <- 10^(transformed_range[2]+0.08*transformed_span)
+      p_value_y <- 10^(transformed_range[2]+0.27*transformed_span)
+    } else {
+      value_range <- range(finite_values)
+      value_span <- diff(value_range)
+      if (value_span == 0) value_span <- max(1, abs(value_range[2]))
+      y_limits <- c(value_range[1], value_range[2]+0.38*value_span)
+      bracket_y <- value_range[2]+0.12*value_span
+      bracket_tip_y <- value_range[2]+0.08*value_span
+      p_value_y <- value_range[2]+0.27*value_span
+    }
+
+    boxplot(
+      panel_values~panel_data$group,
+      log = if (log_y) "y" else "",
+      ylim = y_limits,
+      col = unname(panel_group_colors[group_levels]),
+      border = "black",
+      axes = FALSE,
+      ann = FALSE,
+      lwd = 0.75,
+      medlwd = 0.8,
+      boxwex = box_width
+    )
+    if (affinity_energy_axis) {
+      gas_constant_kcal <- 1.987204/1000
+      energy_tick_positions <- 1/(
+        exp(energy_ticks/(298*gas_constant_kcal))*10^18
+      )
+      axis(
+        2,
+        at = energy_tick_positions,
+        labels = -energy_ticks,
+        lwd = 1,
+        tck = -0.025,
+        col = rgb(0, 0, 0, 0),
+        col.ticks = "black",
+        padj = 1.7,
+        cex.axis = 0.8,
+        las = 3
+      )
+    } else {
+      axis(
+        2,
+        lwd = 1,
+        tck = -0.025,
+        col = rgb(0, 0, 0, 0),
+        col.ticks = "black",
+        padj = 1.7,
+        cex.axis = 0.8,
+        las = 3
+      )
+    }
+    axis(
+      1,
+      at = seq_along(group_levels),
+      labels = group_levels,
+      lwd = 1,
+      tck = -0.025,
+      col = rgb(0, 0, 0, 0),
+      col.ticks = "black",
+      padj = -1.9,
+      cex.axis = 0.8,
+      gap.axis = -1
+    )
+    title(
+      main = outcome_name,
+      line = 1.2,
+      cex.main = 0.9
+    )
+    if (outcome_name == outcome_levels[1]) {
+      mtext(y_label, side = 2, line = 1.2, cex = 0.9)
+    }
+    adjusted_p <- cre_feature_tests$adjusted_p[
+      cre_feature_tests$value_column == value_column &
+        cre_feature_tests$outcome == outcome_name
+    ]
+    segments(1, bracket_y, 2, bracket_y, lwd = 0.75)
+    segments(1, bracket_y, 1, bracket_tip_y, lwd = 0.75)
+    segments(2, bracket_y, 2, bracket_tip_y, lwd = 0.75)
+    text(
+      1.5,
+      p_value_y,
+      labels = paste0(
+        "p = ",
+        format.pval(adjusted_p, digits = 2, eps = 1e-300)
+      ),
+      cex = 0.8
+    )
+    box()
+  }
+  mtext(figure_title, side = 3, outer = TRUE, line = 0.1, cex = 0.9)
+}
+```
+
+### boxplot feature mean
+
+```{r cre-feature-n10-fxh-affinity, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3, out.width='7.5in', fig.align='center'}
+plot_cre_feature_boxplots(
+  cre_feature_all_n10,
+  value_column = "FxH_affinity_link_score_weighted_mean",
+  y_label = expression(
+    "-("*Delta*"G"["FOXA1"]*"+"*Delta*"G"["HNF4A"]*") (-kcal/mol)"
+  ),
+  figure_title = "Affinity",
+  log_y = TRUE,
+  affinity_energy_axis = TRUE
+)
+```
+
+```{r cre-feature-n10-f-plus-h-binding-sites, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3, out.width='7.5in', fig.align='center'}
+plot_cre_feature_boxplots(
+  cre_feature_all_n10,
+  value_column = "F_plus_H_binding_sites_link_score_weighted_mean",
+  y_label = "Number of FOXA1 and HNF4A sites\n(averaged per CRE)",
+  figure_title = paste(
+    "Number of FOXA1 and HNF4A sites"
+  )
+)
+```
+
+```{r cre-feature-n10-non-fh-binding-sites, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3, out.width='7.5in', fig.align='center'}
+plot_cre_feature_boxplots(
+  cre_feature_all_n10,
+  value_column = "non_FH_TF_motif_count_link_score_weighted_mean",
+  y_label = "Non-FOXA1/HNF4A TF motif count\n(averaged per CRE)",
+  figure_title = paste(
+    "Non-FOXA1/HNF4A TF motif count"
+  )
+)
+```
+
+### boxplot feature sum
+
+```{r cre-feature-n10-fxh-affinity-weighted-sum, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3, out.width='7.5in', fig.align='center'}
+plot_cre_feature_boxplots(
+  cre_feature_all_n10,
+  value_column = "FxH_affinity_link_score_weighted_sum",
+  y_label = expression(
+    "-("*Delta*"G"["FOXA1"]*"+"*Delta*"G"["HNF4A"]*") (-kcal/mol)"
+  ),
+  figure_title = "Affinity",
+  log_y = TRUE,
+  affinity_energy_axis = TRUE
+)
+```
+
+\newpage
+
+```{r cre-feature-n10-f-plus-h-sites-weighted-sum, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3, out.width='7.5in', fig.align='center'}
+plot_cre_feature_boxplots(
+  cre_feature_all_n10,
+  value_column = "F_plus_H_binding_sites_link_score_weighted_sum",
+  y_label = "Number of FOXA1 and HNF4A sites\n(weighted sum across CREs)",
+  figure_title = "Number of FOXA1 and HNF4A sites"
+)
+```
+
+### Customized sequence-feature prediction
+
+```{r customized-feature-roc-load, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+customized_feature_roc_file <-
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes/pdf_25_Fig7_custom_features_ROC.tsv"
+customized_feature_roc <- read.delim(
+  customized_feature_roc_file,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+customized_feature_roc_ci_file <-
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes/pdf_25_Fig7_custom_features_ROC_N10_CI.tsv"
+customized_feature_roc_ci <- read.delim(
+  customized_feature_roc_ci_file,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+
+required_roc_columns <- c(
+  "outcome", "percentile", "point", "false_positive_rate",
+  "true_positive_rate", "auc", "n_genes"
+)
+stopifnot(all(required_roc_columns %in% names(customized_feature_roc)))
+stopifnot(
+  all(c("RegP", "HepG2 synergy", "EC50") %in% customized_feature_roc$outcome),
+  all(c(
+    "outcome", "percentile", "false_positive_rate", "tpr_lower",
+    "tpr_upper", "auc", "auc_lower", "auc_upper", "n_components"
+  ) %in% names(customized_feature_roc_ci)),
+  identical(unique(customized_feature_roc_ci$percentile), 10L)
+)
+```
+
+```{r customized-feature-roc, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3.2, out.width='7.5in', fig.align='center', dpi=300}
+roc_line_colors <- c(
+  "RegP" = "#4F315E",
+  "HepG2 synergy" = "#5F7654",
+  "EC50" = "#D99A5F"
+)
+roc_band_colors <- c(
+  "RegP" = grDevices::adjustcolor("#B9A6CB", alpha.f = 0.45),
+  "HepG2 synergy" = grDevices::adjustcolor("#B7D0B3", alpha.f = 0.55),
+  "EC50" = grDevices::adjustcolor("#F6BE8A", alpha.f = 0.50)
+)
+
+old_par <- par(
+  mfrow = c(1, 3),
+  mar = c(3.3, 3.5, 2.2, 0.7),
+  oma = c(1.2, 1.5, 0, 0),
+  pty = "s",
+  bg = NA
+)
+par(cex = 1)
+
+for (outcome_name in c("RegP", "HepG2 synergy", "EC50")) {
+  roc_line_color <- unname(roc_line_colors[outcome_name])
+  roc_band_color <- unname(roc_band_colors[outcome_name])
+  plot(
+    NA,
+    xlim = c(0, 1), ylim = c(0, 1),
+    xaxs = "i", yaxs = "i",
+    xlab = "", ylab = "",
+    axes = FALSE,
+    main = ""
+  )
+  axis(
+    1, at = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
+    lwd = 1, tck = -0.025,
+    col = rgb(0, 0, 0, 0), col.ticks = "black",
+    padj = -2, cex.axis = 0.8
+  )
+  axis(
+    2, at = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
+    lwd = 1, tck = -0.025,
+    col = rgb(0, 0, 0, 0), col.ticks = "black",
+    padj = 1.7, cex.axis = 0.8, las = 3
+  )
+  abline(h = seq(0, 1, by = 0.2), col = "lightgray", lwd = 0.75)
+  box()
+  abline(0, 1, col = "#B8B2BC", lty = 3, lwd = 0.75)
+
+  curve_data <- customized_feature_roc[
+    customized_feature_roc$outcome == outcome_name &
+      customized_feature_roc$percentile == 10,
+  ]
+  curve_data <- curve_data[order(curve_data$point), ]
+  ci_data <- customized_feature_roc_ci[
+    customized_feature_roc_ci$outcome == outcome_name,
+  ]
+  ci_data <- ci_data[order(ci_data$false_positive_rate), ]
+
+  polygon(
+    c(ci_data$false_positive_rate, rev(ci_data$false_positive_rate)),
+    c(ci_data$tpr_lower, rev(ci_data$tpr_upper)),
+    col = roc_band_color,
+    border = NA
+  )
+  lines(
+    curve_data$false_positive_rate,
+    curve_data$true_positive_rate,
+    col = roc_line_color,
+    lwd = 1.5
+  )
+  panel_title <- if (outcome_name == "HepG2 synergy") "Synergy" else outcome_name
+  title(main = panel_title, line = 0.7, cex.main = 0.9)
+  auc_value <- unique(curve_data$auc)
+  stopifnot(length(auc_value) == 1, is.finite(auc_value))
+  text(
+    x = 0.97, y = 0.16,
+    labels = sprintf("AUC=%.3f", auc_value),
+    adj = c(1, 0), cex = 0.68
+  )
+  legend(
+    "bottomright",
+    legend = "95% CI",
+    col = roc_band_color,
+    pch = 15,
+    pt.cex = 1.6,
+    cex = 0.68,
+    bty = "n",
+    inset = c(0.015, 0.01)
+  )
+}
+
+mtext("False-positive rate", side = 1, outer = TRUE, line = 0.15, cex = 0.9)
+mtext("True-positive rate", side = 2, outer = TRUE, line = 0.25, cex = 0.9)
+par(old_par)
+```
+
+### Important sequence-feature groups
+
+```{r customized-feature-importance-load, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+customized_feature_importance_file <- paste0(
+  "/Users/eve/Library/CloudStorage/Dropbox/scripts/Rcodes/",
+  "pdf_25_Fig7_custom_features_importance_N10.tsv"
+)
+customized_feature_importance <- read.delim(
+  customized_feature_importance_file,
+  stringsAsFactors = FALSE,
+  check.names = FALSE
+)
+stopifnot(
+  all(c(
+    "outcome", "rank", "family_label", "mean_delta_auc",
+    "ci95_lower", "ci95_upper", "delta_auc_ci"
+  ) %in% names(customized_feature_importance)),
+  all(is.finite(customized_feature_importance$ci95_lower)),
+  all(table(customized_feature_importance$outcome) == 7),
+  identical(sort(unique(customized_feature_importance$outcome)),
+            c("EC50", "RegP", "Synergy"))
+)
+```
+
+```{r customized-feature-importance-table, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7, fig.height=5.4, fig.cap="Held-out permutation importance for the N = 10% models. All features in each group were permuted together. Gray rows have a 95% confidence-interval lower bound below zero."}
+make_importance_table <- function(outcome_name) {
+  table_data <- customized_feature_importance[
+    customized_feature_importance$outcome == outcome_name,
+  ]
+  table_data <- table_data[order(table_data$rank), ]
+  display_data <- data.frame(
+    `Feature group` = table_data$family_label,
+    `Delta AUC (95% CI)` = table_data$delta_auc_ci,
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+  names(display_data)[1] <- outcome_name
+  header_colors <- c(
+    "RegP" = "#9075AB",
+    "Synergy" = "#8FA77E",
+    "EC50" = "#D99A5F"
+  )
+
+  table_theme <- gridExtra::ttheme_minimal(
+    base_size = 6.8,
+    core = list(
+      fg_params = list(hjust = 0, x = 0.03),
+      bg_params = list(
+        fill = ifelse(table_data$ci95_lower < 0, "#D9D9D9", "white"),
+        col = NA
+      )
+    ),
+    colhead = list(
+      fg_params = list(col = "white", fontface = "bold"),
+      bg_params = list(fill = unname(header_colors[outcome_name]), col = NA)
+    ),
+    padding = grid::unit(c(3.5, 4), "pt")
+  )
+  table_grob <- gridExtra::tableGrob(
+    display_data,
+    rows = NULL,
+    theme = table_theme
+  )
+  table_grob$widths <- grid::unit(c(5.0, 3.45), "cm")
+  table_grob
+}
+
+importance_table_top <- gridExtra::arrangeGrob(
+  make_importance_table("RegP"),
+  make_importance_table("Synergy"),
+  ncol = 2
+)
+importance_table_bottom <- gridExtra::arrangeGrob(
+  grid::nullGrob(),
+  make_importance_table("EC50"),
+  grid::nullGrob(),
+  ncol = 3,
+  widths = c(0.5, 1, 0.5)
+)
+gridExtra::grid.arrange(
+  importance_table_top,
+  importance_table_bottom,
+  ncol = 1,
+  heights = c(1, 1)
+)
+```
+
+```{r customized-feature-importance-figure, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3.2, fig.cap="Held-out group-level permutation importance for the N = 10% models. Points show the mean decrease in AUC and whiskers show 95% cluster-bootstrap confidence intervals. The x-axis break preserves visibility of the smaller effects."}
+importance_feature_order <- c(
+  "Affinity",
+  "FOXA1/HNF4A motif count",
+  "CRE abundance",
+  "Site position and spacing",
+  "Non-FOXA1/HNF4A TF motifs",
+  "FOXA1/HNF4A motif density",
+  "Site orientation"
+)
+importance_plot_data <- customized_feature_importance
+importance_plot_data$feature_y <- (
+  length(importance_feature_order) -
+    match(importance_plot_data$family_label, importance_feature_order) + 1
+)
+importance_plot_data$feature_y_dodged <- importance_plot_data$feature_y +
+  unname(c("RegP" = 0.18, "Synergy" = 0, "EC50" = -0.18)[
+    importance_plot_data$outcome
+  ])
+importance_figure <- ggplot2::ggplot(importance_plot_data) +
+  ggplot2::geom_vline(
+    xintercept = 0,
+    colour = "#8C8C8C",
+    linewidth = 0.45,
+    linetype = 2
+  ) +
+  ggplot2::geom_segment(
+    ggplot2::aes(
+      x = ci95_lower,
+      xend = ci95_upper,
+      y = feature_y_dodged,
+      yend = feature_y_dodged,
+      colour = outcome
+    ),
+    linewidth = 0.75
+  ) +
+  ggplot2::geom_point(
+    ggplot2::aes(
+      x = mean_delta_auc,
+      y = feature_y_dodged,
+      colour = outcome
+    ),
+    size = 2.4,
+    shape = 16
+  ) +
+  ggplot2::scale_colour_manual(
+    values = c(
+      "RegP" = "#6F4E7C",
+      "Synergy" = "#5F7654",
+      "EC50" = "#D99A5F"
+    )
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = seq_along(importance_feature_order),
+    labels = rev(importance_feature_order),
+    expand = ggplot2::expansion(add = c(0.45, 0.45))
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = c(0, 0.015, 0.03,
+               0.10, 0.15, 0.20, 0.25),
+    labels = scales::label_number(accuracy = 0.001)
+  ) +
+  ggplot2::labs(
+    x = expression(Delta*"AUC after feature permutation"),
+    y = NULL,
+    colour = NULL
+  ) +
+  ggplot2::theme_classic(base_size = 9) +
+  ggplot2::theme(
+    axis.text.y = ggplot2::element_text(colour = "black", size = 8),
+    axis.text.x = ggplot2::element_text(colour = "black", size = 7.5),
+    axis.title.x = ggplot2::element_text(size = 8.5),
+    axis.ticks.y = ggplot2::element_blank(),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.margin = ggplot2::margin(t = -2),
+    legend.key.width = grid::unit(0.9, "cm"),
+    plot.margin = ggplot2::margin(4, 8, 2, 4)
+  ) +
+  ggbreak::scale_x_break(c(0.04, 0.09), scales = 1, space = 0.10)
+
+print(importance_figure)
+```
+
+```{r customized-feature-importance-figure-regp-synergy, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3.2, fig.cap="Held-out group-level permutation importance for the N = 10% RegP and Synergy models. Points show the mean decrease in AUC and whiskers show 95% cluster-bootstrap confidence intervals. The x-axis break preserves visibility of the smaller effects."}
+importance_plot_data_regp_synergy <- customized_feature_importance[
+  customized_feature_importance$outcome %in% c("RegP", "Synergy"),
+]
+importance_plot_data_regp_synergy$feature_y <- (
+  length(importance_feature_order) -
+    match(
+      importance_plot_data_regp_synergy$family_label,
+      importance_feature_order
+    ) + 1
+)
+importance_plot_data_regp_synergy$feature_y_dodged <-
+  importance_plot_data_regp_synergy$feature_y +
+  ifelse(
+    importance_plot_data_regp_synergy$outcome == "RegP",
+    0.13,
+    -0.13
+  )
+
+importance_figure_regp_synergy <- ggplot2::ggplot(
+  importance_plot_data_regp_synergy
+) +
+  ggplot2::geom_vline(
+    xintercept = 0,
+    colour = "#8C8C8C",
+    linewidth = 0.45,
+    linetype = 2
+  ) +
+  ggplot2::geom_segment(
+    ggplot2::aes(
+      x = ci95_lower,
+      xend = ci95_upper,
+      y = feature_y_dodged,
+      yend = feature_y_dodged,
+      colour = outcome
+    ),
+    linewidth = 0.75
+  ) +
+  ggplot2::geom_point(
+    ggplot2::aes(
+      x = mean_delta_auc,
+      y = feature_y_dodged,
+      colour = outcome
+    ),
+    size = 2.4,
+    shape = 16
+  ) +
+  ggplot2::scale_colour_manual(
+    values = c("RegP" = "#6F4E7C", "Synergy" = "#5F7654"),
+    breaks = c("RegP", "Synergy")
+  ) +
+  ggplot2::scale_y_continuous(
+    breaks = seq_along(importance_feature_order),
+    labels = rev(importance_feature_order),
+    expand = ggplot2::expansion(add = c(0.45, 0.45))
+  ) +
+  ggplot2::scale_x_continuous(
+    breaks = c(0, 0.01, 0.1, 0.15, 0.2, 0.25),
+    labels = scales::label_number(accuracy = 0.001)
+  ) +
+  ggplot2::labs(
+    x = expression(Delta*"AUC after feature permutation"),
+    y = NULL,
+    colour = NULL
+  ) +
+  ggplot2::theme_classic(base_size = 9) +
+  ggplot2::theme(
+    axis.text.y = ggplot2::element_text(colour = "black", size = 8),
+    axis.text.x = ggplot2::element_text(colour = "black", size = 7.5),
+    axis.title.x = ggplot2::element_text(size = 8.5),
+    axis.ticks.y = ggplot2::element_blank(),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.margin = ggplot2::margin(t = -2),
+    legend.key.width = grid::unit(0.9, "cm"),
+    plot.margin = ggplot2::margin(4, 8, 2, 4)
+  ) +
+  ggbreak::scale_x_break(c(0.02, 0.09), scales = 1, space = 0.10)
+
+print(importance_figure_regp_synergy)
+```
+
+```{r customized-feature-roc-all-percentiles, echo=FALSE, message=FALSE, warning=FALSE, fig.width=7.5, fig.height=3.2, out.width='7.5in', fig.align='center', dpi=300}
+roc_percentiles <- c(5, 10, 20, 30, 33, 50)
+roc_colors_by_outcome <- list(
+  "RegP" = setNames(
+    grDevices::colorRampPalette(c("#4F315E", "#B9A6CB"))(
+      length(roc_percentiles)
+    ),
+    roc_percentiles
+  ),
+  "HepG2 synergy" = setNames(
+    grDevices::colorRampPalette(c("#5F7654", "#B7D0B3"))(
+      length(roc_percentiles)
+    ),
+    roc_percentiles
+  ),
+  "EC50" = setNames(
+    grDevices::colorRampPalette(c("#D99A5F", "#F6BE8A"))(
+      length(roc_percentiles)
+    ),
+    roc_percentiles
+  )
+)
+roc_line_types <- setNames(c(1, 2, 3, 4, 5, 6), roc_percentiles)
+
+old_par <- par(
+  mfrow = c(1, 3),
+  mar = c(3.3, 3.5, 2.2, 0.7),
+  oma = c(1.2, 1.5, 0, 0),
+  pty = "s",
+  bg = NA
+)
+par(cex = 1)
+
+for (outcome_name in c("RegP", "HepG2 synergy", "EC50")) {
+  roc_colors <- roc_colors_by_outcome[[outcome_name]]
+  plot(
+    NA,
+    xlim = c(0, 1), ylim = c(0, 1),
+    xaxs = "i", yaxs = "i",
+    xlab = "", ylab = "",
+    axes = FALSE,
+    main = ""
+  )
+  axis(
+    1, at = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
+    lwd = 1, tck = -0.025,
+    col = rgb(0, 0, 0, 0), col.ticks = "black",
+    padj = -2, cex.axis = 0.8
+  )
+  axis(
+    2, at = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
+    lwd = 1, tck = -0.025,
+    col = rgb(0, 0, 0, 0), col.ticks = "black",
+    padj = 1.7, cex.axis = 0.8, las = 3
+  )
+  abline(h = seq(0, 1, by = 0.2), col = "lightgray", lwd = 0.75)
+  box()
+  abline(0, 1, col = "#B8B2BC", lty = 3, lwd = 0.75)
+
+  for (percentile_value in rev(roc_percentiles)) {
+    curve_data <- customized_feature_roc[
+      customized_feature_roc$outcome == outcome_name &
+        customized_feature_roc$percentile == percentile_value,
+    ]
+    curve_data <- curve_data[order(curve_data$point), ]
+    lines(
+      curve_data$false_positive_rate,
+      curve_data$true_positive_rate,
+      col = roc_colors[as.character(percentile_value)],
+      lty = roc_line_types[as.character(percentile_value)],
+      lwd = 1.5
+    )
+  }
+
+  auc_values <- vapply(roc_percentiles, function(percentile_value) {
+    unique(customized_feature_roc$auc[
+      customized_feature_roc$outcome == outcome_name &
+        customized_feature_roc$percentile == percentile_value
+    ])
+  }, numeric(1))
+  panel_title <- if (outcome_name == "HepG2 synergy") "Synergy" else outcome_name
+  title(main = panel_title, line = 0.7, cex.main = 0.9)
+  legend(
+    "bottomright",
+    legend = sprintf("N=%d  AUC=%.3f", roc_percentiles, auc_values),
+    col = roc_colors[as.character(roc_percentiles)],
+    lty = roc_line_types[as.character(roc_percentiles)],
+    lwd = 1.5,
+    cex = 0.64,
+    bty = "n",
+    inset = c(0.015, 0.01),
+    y.intersp = 0.9,
+    seg.len = 2.1
+  )
+}
+
+mtext("False-positive rate", side = 1, outer = TRUE, line = 0.15, cex = 0.9)
+mtext("True-positive rate", side = 2, outer = TRUE, line = 0.25, cex = 0.9)
+par(old_par)
+```

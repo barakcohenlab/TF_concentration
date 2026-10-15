@@ -1,0 +1,3674 @@
+---
+title: "sort_plot"
+output:
+  pdf_document: default
+date: '2024-03-13'
+---
+
+```{r setup, echo=FALSE, message=F,include=F}
+knitr::opts_chunk$set(message=FALSE, tidy.opts=list(width.cutoff=60), tidy=TRUE, dpi=600, dev.args = list(bg = NA) )
+knitr::opts_knit$set(root.dir = '/Users/eve/Library/CloudStorage/Dropbox/tmp_work/macbook_2023/k1f_combined_counts/')
+
+#knitr::include_graphics()
+library(ggplot2)
+library(ggpmisc)
+library(gplots)
+library(plotrix)
+library(pheatmap)
+library(viridis)
+library(reshape2)
+library(dplyr)
+library(eulerr)
+
+library(minpack.lm)
+synergy_col <- "#8FA77E"
+synergy_fill_col <- "#C9D8BD"
+draw_diag <- function(){
+  lines(c(10^(-10),10^10),c(10^(-10),10^10), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+}
+new_diag <- function(usr, col = '#A6A6A6') {
+  lims <- c(max(usr[1], usr[3]), min(usr[2], usr[4]))
+  
+  segments(
+    lims[1], lims[1],
+    lims[2], lims[2],
+    lwd = 1.5,
+    col = alpha(col, 0.75),
+    lty = 5
+  )
+}
+```
+
+
+### load
+
+```{r, echo=FALSE, message=F,include=F}
+
+
+
+
+
+s_header=c( "seqID","s5" ,  "s4" ,  "s3d5", "s3" ,  "s2d5", "s2" ,  "s1d5", "s1" )
+
+f_hsp_matrix_3rMean <- read.table("~/Dropbox/postdoc/tft_metadata/k1f_hsp_3rMean.txt",col.names = s_header,row.names = 1)
+f_hsp_matrix_3rDev <- read.table("~/Dropbox/postdoc/tft_metadata/k1f_hsp_3rDev.txt",col.names = s_header,row.names = 1)
+
+h_hsp_matrix_3rMean <- read.table("~/Dropbox/postdoc/tft_metadata/k3h_hsp_3rMean.txt",col.names = s_header,row.names = 1)
+h_hsp_matrix_3rDev <- read.table("~/Dropbox/postdoc/tft_metadata/k3h_hsp_3rDev.txt",col.names = s_header,row.names = 1)
+
+fh_hsp_matrix_3rMean <- read.table("~/Dropbox/postdoc/tft_metadata/k4fh_hsp_3rMean.txt",col.names = s_header,row.names = 1)
+fh_hsp_matrix_3rDev <- read.table("~/Dropbox/postdoc/tft_metadata/k4fh_hsp_3rDev.txt",col.names = s_header,row.names = 1)
+
+bc_full_list <- row.names(fh_hsp_matrix_3rDev)
+basal_list  <- bc_full_list[grep("basal",bc_full_list)]
+
+#pwm_ocore <- read.table("~/mnt/scratch/libDesign/pfPilot/workplace/v1_200/pft_v1/pft_v1_allcat_165_candidates_allInfo.txt" ,row.names = 1,col.names = c("name","strand","F","H","seq"))
+#pwm_ocore <- read.table("../fh_sumscoring_pft_v1_165.txt" ,row.names = 1,col.names = c("name","strand","F","H"))
+#kd_score_F_random <- (read.table("../pwmV1_foxa1_Ka.txt" ,row.names = 1,sep = "\t"))
+#kdProd2_score_F_random <- (read.table("~/mnt/scratch/sequencing/fh_Ka/pwmV2_foxa1_KaProd2.txt" ,row.names = 1,sep = "\t"))
+
+#kd_score_F_table <- (read.table("../pwmV3_foxa1_perPos.txt" ,row.names = 1,sep = "\t"))^8
+kd_score_F_table <- (read.table("~/mnt/scratch/sequencing/predicted_kas/foxa1_kas_nt1_v8v_v8_1e3_0725.txt" ,row.names = 1,sep = "\t",col.names = c("name","kas","kap2","kap3")))
+kd_score_H_table <- (read.table("~/mnt/scratch/sequencing/predicted_kas/hnf4a_kas_nt30_v8v_v8_1e3_0725.txt" ,row.names = 1,sep = "\t",col.names = c("name","kas","kap2","kap3")))
+
+
+#order_foxa1 <-  read.table("../foxa1_order_fromPWM_V1.txt" ,row.names = 1)
+
+#conc_tf <- c(0.00307463,0.006423741,0.017279486,0.061289717,0.186231888,0.377452432,0.831039713,1.364633945)
+
+conc_foxa1 <- c(1.14511152,1.870470303,4.202731758,12.55323512,32.15738598,58.73244109,112.9926126,159.465) ## in nM
+conc_hnf4a_alone <- c(0.2986401 , 0.4620007,  0.6853293  ,1.7249063  ,7.1600411 ,13.8676874 ,31.4189434 ,47.4772956)
+
+#conc_hnf4a <- c(0.261512863,0.294713335,0.502006255,1.114882814,1.52022912,4.100298822,13.96516233,27.00893)*3.2319466
+conc_hnf4a <- c(0.8451956 , 0.9524978 , 1.6224574 , 3.6032417 , 4.9132993 ,13.2519468 ,45.1346589, 87.2914195)
+fxh_con <- conc_foxa1 * conc_hnf4a
+
+conc_dox <- c(0.004, 0.02, 0.05, 0.1, 0.25, 0.5, 1.25, 2.5)
+
+h_c_labels <- round(conc_hnf4a[c(2,4,6,8)],1)
+h_c_labels <- c(1,4,13,87)
+
+h_c_labels2 <- round(conc_hnf4a_alone[c(2,4,6,8)],1)
+h_c_labels2 <- c(0.5,2,14,48)
+
+f_c_labels <- round(conc_foxa1[c(2,4,6,8)],1)
+f_c_labels <- c(2,13,59,160)
+
+fh_labels <- conc_foxa1[c(2,4,6,8)] * conc_hnf4a[c(2,4,6,8)]
+
+
+mutF_list <- bc_full_list[grep("mutF",bc_full_list)]
+mutH_list <- bc_full_list[grep("mutH",bc_full_list)]
+mutFH_list <- bc_full_list[grep("mutaFH",bc_full_list)]
+L1_list <- bc_full_list[grep("L1",bc_full_list)]
+L1_list_highF <- c("L1_highF","L1_3highF","L1_5highF","L1_7highF")
+the100_list <- gsub("_mutaFH","",mutFH_list)
+genomic_cres <- bc_full_list[grep("chr|L1",bc_full_list)]
+genomic_cres_nomut <- genomic_cres[grep("muta|scr",genomic_cres,invert = TRUE)]
+control_cres <- bc_full_list[grep("muta|scr|Kmpra",bc_full_list)]
+motif_count <- (read.table("~/mnt/scratch/sequencing/fimoR5_pft_v1/highExpr_cre_TFBScount.txt" ,sep = "\t",col.names = c("cre","count"),row.names = 1))
+
+f_nonmono <- read.table("~/Dropbox/postdoc/tft_metadata/nonmonotonic/hsp_f_nonmono.txt")$V1
+h_nonmono <- read.table("~/Dropbox/postdoc/tft_metadata/nonmonotonic/hsp_h_nonmono.txt")$V1
+fh_nonmono <- read.table("~/Dropbox/postdoc/tft_metadata/nonmonotonic/hsp_fh_nonmono.txt")$V1
+
+lib1_tfbsn <- read.table("~/mnt/scratch/sequencing/perpos_prob/perCRE_bs_count.txt" ,row.names = 1,header=T)
+
+
+```
+
+### F-H conc. dir 
+
+```{r,  eval=T,fig.width=3.1, fig.height=3.,  echo=F,dpi=300, warning=F, results='show'}
+par(mar = c(4, 4, 4, 4))
+
+conc_fit <- lm(conc_hnf4a ~ 0 + conc_foxa1)
+conc_fit_coef <- coef(conc_fit)
+conc_fit_r2 <- summary(conc_fit)$r.squared
+hepG2_plot_foxa1_conc <- 49.27642992
+hepG2_plot_hnf4a_conc <- 26.53009141
+hepG2_plot_col <- "#E69F00"
+inducible_k562_plot_col <- alpha("gray5", 0.5)
+
+plot(
+  conc_foxa1, conc_hnf4a,
+  xlim = c(0, 170),
+  ylim = c(0.5, 120),
+  col = inducible_k562_plot_col,
+  pch = 16,
+  cex = 1,
+  axes = FALSE,
+  ann = FALSE
+)
+axis(
+  2, at = c(0, 25, 50, 75), lwd = 1, tck = -0.025,
+  col = rgb(0, 0, 0, 0), col.ticks = "black", padj = 1.7, cex.axis = 0.8
+)
+axis(
+  1, at = c(0, 50, 100, 150), lwd = 1, tck = -0.025,
+  col = rgb(0, 0, 0, 0), col.ticks = "black", padj = -2, cex.axis = 0.8
+)
+title(
+  xlab = "[FOXA1] (nM)",
+  ylab = "[HNF4A] (nM)",
+  line = 1.2,
+  cex.lab = 0.8
+)
+box()
+
+conc_line_x <- seq(1.1, 160, length.out = 200)
+conc_line_y <- conc_fit_coef[["conc_foxa1"]] * conc_line_x
+lines(
+  conc_line_x, conc_line_y,
+  col = alpha("gray30", 0.9),
+  lwd = 1
+)
+points(
+  hepG2_plot_foxa1_conc, hepG2_plot_hnf4a_conc,
+  pch = 16, cex = 1,
+  col = hepG2_plot_col
+)
+text(
+  hepG2_plot_foxa1_conc, hepG2_plot_hnf4a_conc,
+  labels = "HepG2", pos = 4, offset = 0.45,
+  col = hepG2_plot_col, cex = 0.75
+)
+text(
+  tail(conc_foxa1, 1), tail(conc_hnf4a, 1),
+  labels = "Inducible K562", pos = 2, offset = 0.45,
+  col = inducible_k562_plot_col, cex = 0.75
+)
+
+conc_eq_label <- sprintf(
+  "y = %.3fx",
+  conc_fit_coef[["conc_foxa1"]]
+)
+legend(
+  "topleft",
+  legend = c(conc_eq_label, sprintf("R\u00b2 = %.3f", conc_fit_r2)),
+  bty = "n",
+  inset = 0.02,
+  cex = 0.8
+)
+
+conc_fit_logplot <- lm(conc_hnf4a ~ 0 + conc_foxa1)
+conc_fit_logplot_coef <- coef(conc_fit_logplot)
+conc_fit_logplot_r2 <- summary(conc_fit_logplot)$r.squared
+
+plot(
+  conc_foxa1, conc_hnf4a,
+  log = "xy",
+  xlim = c(1, 200),
+  ylim = c(0.5, 120),
+  col = inducible_k562_plot_col,
+  pch = 16,
+  cex = 1,
+  axes = FALSE,
+  ann = FALSE
+)
+axis(
+  2, at = c(1, 10, 100), labels = c(1, 10, 100),
+  lwd = 1, tck = -0.025, col = rgb(0, 0, 0, 0),
+  col.ticks = "black", padj = 1.7, cex.axis = 0.8
+)
+axis(
+  1, at = c(1, 10, 100), labels = c(1, 10, 100),
+  lwd = 1, tck = -0.025, col = rgb(0, 0, 0, 0),
+  col.ticks = "black", padj = -2, cex.axis = 0.8
+)
+title(
+  xlab = "[FOXA1] (nM)",
+  ylab = "[HNF4A] (nM)",
+  line = 1.2,
+  cex.lab = 0.8
+)
+box()
+
+conc_log_line_x <- exp(seq(log(1.1), log(160), length.out = 200))
+conc_log_line_y <- conc_fit_logplot_coef[["conc_foxa1"]] * conc_log_line_x
+lines(
+  conc_log_line_x, conc_log_line_y,
+  col = alpha("gray30", 0.9),
+  lwd = 1
+)
+points(
+  hepG2_plot_foxa1_conc, hepG2_plot_hnf4a_conc,
+  pch = 16, cex = 1,
+  col = hepG2_plot_col
+)
+text(
+  hepG2_plot_foxa1_conc, hepG2_plot_hnf4a_conc,
+  labels = "HepG2", pos = 4, offset = 0.45,
+  col = hepG2_plot_col, cex = 0.75
+)
+text(
+  tail(conc_foxa1, 1), tail(conc_hnf4a, 1),
+  labels = "Inducible K562", pos = 2, offset = 0.45,
+  col = inducible_k562_plot_col, cex = 0.75
+)
+
+conc_log_eq_label <- sprintf(
+  "y = %.3fx",
+  conc_fit_logplot_coef[["conc_foxa1"]]
+)
+legend(
+  "topleft",
+  legend = c(conc_log_eq_label, sprintf("R\u00b2 = %.3f", conc_fit_logplot_r2)),
+  bty = "n",
+  inset = 0.02,
+  cex = 0.7
+)
+```
+
+### basic statistics
+
+```{r,  eval=T,fig.width=4.5, fig.height=2.5,  echo=F,dpi=600, warning=F, results='show'}
+
+
+
+k1f_fc <- data.frame(fc=(f_hsp_matrix_3rMean$s1/f_hsp_matrix_3rMean$s5),label=rep(NA,length(bc_full_list)),line=rep("FOXA1",length(bc_full_list)),row.names=row.names(f_hsp_matrix_3rMean))
+k1f_fc[genomic_cres_nomut,]$label <- "genomic_CRE"
+k1f_fc[control_cres,]$label <- "ctrl"
+
+min(k1f_fc$fc)
+max(k1f_fc$fc)
+mean(k1f_fc$fc)
+
+#boxplot(k1f_fc[genomic_cres_nomut,]$fc, k1f_fc[control_cres,]$fc)
+
+k3h_fc <- data.frame(fc=(h_hsp_matrix_3rMean$s1/h_hsp_matrix_3rMean$s5),label=rep(NA,length(bc_full_list)),line=rep("HNF4A",length(bc_full_list)),row.names=row.names(h_hsp_matrix_3rMean))
+k3h_fc[genomic_cres_nomut,]$label <- "genomic_CRE"
+k3h_fc[control_cres,]$label <- "ctrl"
+min(k3h_fc$fc)
+max(k3h_fc$fc)
+mean(k3h_fc$fc)
+
+#boxplot(k3h_fc[genomic_cres_nomut,]$fc, k3h_fc[control_cres,]$fc)
+
+
+k4fh_fc <- data.frame(fc=(fh_hsp_matrix_3rMean$s1/fh_hsp_matrix_3rMean$s5),label=rep(NA,length(bc_full_list)),line=rep("HNF4A&FOXA1",length(bc_full_list)),row.names=row.names(fh_hsp_matrix_3rMean))
+k4fh_fc[genomic_cres_nomut,]$label <- "genomic_CRE"
+k4fh_fc[control_cres,]$label <- "ctrl"
+min(k4fh_fc$fc)
+max(k4fh_fc$fc)
+mean(k4fh_fc$fc)
+
+#boxplot(k4fh_fc[genomic_cres_nomut,]$fc, k4fh_fc[control_cres,]$fc)
+
+#fc_dist <- function(genomic_cres_nomut,colors=c("red","blue","purple")){
+  colors <- c("#E86F77","#4192D9","#9075ab")
+ # colors <-c("red","gray","blue","gray","purple","gray")
+#groupname <- c("1","2","3","4","5","6")
+df <- data.frame(
+  line=c(k1f_fc[genomic_cres_nomut,]$line,k3h_fc[genomic_cres_nomut,]$line,k4fh_fc[genomic_cres_nomut,]$line,
+            k1f_fc[control_cres,]$line,k3h_fc[control_cres,]$line,k4fh_fc[control_cres,]$line),
+  group = c(k1f_fc[genomic_cres_nomut,]$label,k3h_fc[genomic_cres_nomut,]$label,k4fh_fc[genomic_cres_nomut,]$label,
+            k1f_fc[control_cres,]$label,k3h_fc[control_cres,]$label,k4fh_fc[control_cres,]$label),
+  value = c(k1f_fc[genomic_cres_nomut,]$fc,k3h_fc[genomic_cres_nomut,]$fc,k4fh_fc[genomic_cres_nomut,]$fc,
+            k1f_fc[control_cres,]$fc,k3h_fc[control_cres,]$fc,k4fh_fc[control_cres,]$fc),
+  name=c(rep(genomic_cres_nomut,3),rep(control_cres,3))
+)
+
+ggplot(df, aes(x=group, y=value, fill=line)) +
+  geom_violin(width=0.5) +
+    geom_boxplot(width=0.5) +
+  scale_y_log10(breaks = c(1, 10, 100))+
+   scale_x_discrete(limits = c("genomic_CRE","ctrl"),labels = c("gCREs" ,"Ctrl"))+
+  scale_fill_manual(values=colors)+
+  theme(panel.grid.major.y = element_line(color = "grey85"),
+  axis.title.x = element_blank(),
+  #axis.title.y = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank()
+  )+labs(
+    x = "",
+    y = "Activity FC"
+  )#}
+
+ggplot(subset(df, group %in% c("genomic_CRE")), aes(x=line, y=value, fill=line)) +
+   # Each connector family has an opaque white separator beneath its
+   # transparent colored lines, preventing colors from blending together.
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("FOXA1", "HNF4A&FOXA1")),
+             aes(group=name), alpha=1, color="white", linewidth=0.2) +
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("FOXA1", "HNF4A&FOXA1")),
+             aes(group=name), alpha=0.2, color="#E49AA1", linewidth=0.2) +
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("HNF4A", "HNF4A&FOXA1")),
+             aes(group=name), alpha=1, color="white", linewidth=0.2) +
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("HNF4A", "HNF4A&FOXA1")),
+             aes(group=name), alpha=0.2, color="#8EAFE0", linewidth=0.2) +
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("FOXA1", "HNF4A")),
+             aes(group=name), alpha=1, color="white", linewidth=0.2) +
+   geom_line(data=subset(subset(df, group %in% c("genomic_CRE")), line %in% c("FOXA1", "HNF4A")),
+             aes(group=name), alpha=0.5, color="gray", linewidth=0.2) +
+ geom_violin(width=0.8, linewidth=0.35) +
+    geom_boxplot(width=0.15, linewidth=0.35, outlier.size=1.) +
+  scale_y_log10(breaks = c(1,2, 10, 100))+
+  # scale_x_discrete(limits = c("genomic_CRE","ctrl"),labels = c("gCREs" ,"Ctrl"))+
+  scale_fill_manual(values=colors)+
+  theme(panel.grid.major.y = element_line(color = "grey85", linewidth = 0.25),
+  axis.title.x = element_blank(),
+  #axis.title.y = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank()
+  )+labs(
+    x = "",
+    y = "Activity FC"
+  )
+
+#fc_dist(genomic_cres_nomut,c("#E86F77","#4192D9","#9075ab"))
+
+tmp <- k4fh_fc[control_cres,]
+#plot(k1f_fc$fc,k3h_fc$fc,log="xy")
+
+
+responsive_f <- bc_full_list[which(k1f_fc[bc_full_list,]$fc>2)]
+responsive_h <- bc_full_list[which(k3h_fc[bc_full_list,]$fc>2)]
+responsive_fh <- bc_full_list[which(k4fh_fc[bc_full_list,]$fc>2)]
+sets <- list(
+  "F" = responsive_f,
+  "H" = responsive_h,
+     "FH" = responsive_fh
+ )
+fit <- euler(sets)     # same 'sets' list as above
+plot(fit, quantities = TRUE)
+plot(fit, quantities = TRUE,
+     fills = list(fill=NA, alpha=0),
+     edges = list(col=c("#E86F77","#4192D9","#9075ab"), lwd=4))
+
+### calculate how much are greater
+length(which(k4fh_fc[genomic_cres_nomut,]$fc>k3h_fc[genomic_cres_nomut,]$fc & k4fh_fc[genomic_cres_nomut,]$fc>k1f_fc[genomic_cres_nomut,]$fc))/length(genomic_cres_nomut)
+length(which(k4fh_fc[genomic_cres_nomut,]$fc>2))/length(genomic_cres_nomut)
+length(which(k1f_fc[genomic_cres_nomut,]$fc>2))/length(genomic_cres_nomut)
+length(which(k3h_fc[genomic_cres_nomut,]$fc>2))/length(genomic_cres_nomut)
+
+max(k4fh_fc[genomic_cres_nomut,]$fc)
+max(k1f_fc[genomic_cres_nomut,]$fc)
+max(k3h_fc[genomic_cres_nomut,]$fc)
+
+```
+
+```{r,  eval=T,fig.width=2.6, fig.height=3.2,  echo=F,dpi=300, warning=F, results='show'}
+#par(bg=NA)
+fc_scatter_ticks <- c(1,5,25,125)
+plot_fc_comparison <- function(x,y,xlab,ylab,point_col,
+                               axis_ticks=fc_scatter_ticks,xlim,ylim) {
+  keep <- is.finite(x) & is.finite(y) & x > 0 & y > 0
+  x <- x[keep]
+  y <- y[keep]
+  plot_lims <- range(c(x,y,axis_ticks))
+  plot(x,y,log="xy",type="n",axes=FALSE,ann=FALSE,
+       xlim=xlim,ylim=ylim)
+  new_diag(10^(par("usr")))
+  points(x,y,pch=21,cex=0.65,lwd=0.35,
+         col=alpha("black",0.30),bg=alpha(point_col,0.50))
+  axis(1,at=axis_ticks,labels=axis_ticks,lwd=1,tck=-0.02,
+       col=rgb(0,0,0,0),col.ticks="black",padj=-2,cex.axis=0.8)
+  axis(2,at=axis_ticks,labels=axis_ticks,lwd=1,tck=-0.02,
+       col=rgb(0,0,0,0),col.ticks="black",padj=1.5,cex.axis=0.8)
+  title(xlab=xlab,ylab=ylab,line=1.5,cex.lab=1)
+  box()
+}
+
+plot_fc_comparison(k1f_fc$fc,k3h_fc$fc,
+                   "FOXA1","HNF4A","#6B6B6B",
+                   axis_ticks=c(1,5,25),xlim=c(0.6,26),ylim=c(0.6,26))
+plot_fc_comparison(k1f_fc$fc,k4fh_fc$fc,
+                   "FOXA1","FOXA1&HNF4A","#E86F77",xlim=c(0.6,26),ylim=c(0.6,280))
+plot_fc_comparison(k3h_fc$fc,k4fh_fc$fc,
+                   "HNF4A","FOXA1&HNF4A","#4192D9",xlim=c(0.6,26),ylim=c(0.6,280))
+
+```
+
+```{r,  eval=F,fig.width=3.5, fig.height=5,  echo=F,  warning=F, results='show'}
+
+colorpick <- "#23D5D5"
+boxplot((fh_hsp_matrix_3rMean$s5),
+        (fh_hsp_matrix_3rMean$s4),
+        (fh_hsp_matrix_3rMean$s3d5),
+        (fh_hsp_matrix_3rMean$s3),
+        (fh_hsp_matrix_3rMean$s2d5),
+        (fh_hsp_matrix_3rMean$s2),
+        (fh_hsp_matrix_3rMean$s1d5),
+        (fh_hsp_matrix_3rMean$s1),outline=T,ann=F,range=8,col=c("white",alpha(colorpick,0.125),alpha(colorpick,0.25),alpha(colorpick,0.375),alpha(colorpick,0.5),alpha(colorpick,0.625),alpha(colorpick,0.8),alpha(colorpick,1)),boxwex=0.75,axes = FALSE,cex=0.,pch=16)
+for (i in c(1:length(fh_hsp_matrix_3rMean$s5))) {
+  lines(c(1:8),fh_hsp_matrix_3rMean[i,],col=alpha("gray",0.9))
+}
+boxplot((fh_hsp_matrix_3rMean$s5),
+        (fh_hsp_matrix_3rMean$s4),
+        (fh_hsp_matrix_3rMean$s3d5),
+        (fh_hsp_matrix_3rMean$s3),
+        (fh_hsp_matrix_3rMean$s2d5),
+        (fh_hsp_matrix_3rMean$s2),
+        (fh_hsp_matrix_3rMean$s1d5),
+        (fh_hsp_matrix_3rMean$s1),outline=T,ann=F,range=8,col=c("white",alpha(colorpick,0.125),alpha(colorpick,0.25),alpha(colorpick,0.375),alpha(colorpick,0.5),alpha(colorpick,0.625),alpha(colorpick,0.8),alpha(colorpick,1)),boxwex=0.75,axes = FALSE,add=T,cex=0)
+   axis(2, at = c(),   lwd = 1, tck = 0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=0.8, cex.axis=1,tck = -0.02)
+
+box()
+```
+
+### common curve 
+```{r,  eval=T,fig.width=3.5, fig.height=5.5,  echo=F,  warning=F, results='show'}
+set_canvas <- function(x,xlab,xat,xlabels=""){
+   plot(x, (c(1:8)-0.995)*36, log = "xy", pch=16, cex=0, col="white",axes = FALSE, ann = FALSE)
+  axis(2, at = c(1,5,25,125),   lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=1.8, cex.axis=0.8)
+  axis(1, at = xat, labels = xlabels,lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=-2., cex.axis=0.8)
+    title(ylab="Activity [a.u.]",xlab=xlab, line=1.2, cex.lab=1)
+  box()
+}
+
+add_top_axis <- function(){
+  axis(3, at = fh_labels,labels = h_c_labels, lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=1.78, cex.axis=0.8)
+
+}
+```
+
+
+
+
+### three background
+```{r,  eval=T,fig.width=2.9, fig.height=3.5,  echo=F, dpi=600, warning=F, results='show'}
+
+
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+fh_candidate <- c("L1_highFH","chr1_57433643_57433843","chr2_231915124_231915324")
+fh_candidate_col <- c(
+  "L1_highFH" = "#F3A8AE",
+  "chr1_57433643_57433843" = "#B89C8A",
+  "chr2_231915124_231915324" = "#7FA77A"
+)
+lty_three <- c(1,3,4)
+for (i in c(1:3)) {
+      lines(fxh_con,fh_hsp_matrix_3rMean[fh_candidate[i],],col=fh_candidate_col[fh_candidate[i]],lwd=1.5,lty=lty_three[i])
+      #lines(fxh_con,f_hsp_matrix_3rMean[fh_candidate[i],],col="#E86F77",lwd=1.5,lty=lty_three[i])
+      #lines(fxh_con,h_hsp_matrix_3rMean[fh_candidate[i],],col="#4192D9",lwd=1.5,lty=lty_three[i])
+
+}
+
+
+```
+
+### 4
+
+```{r,  eval=T,fig.width=2.9, fig.height=4.5,  echo=F, dpi=600, warning=F, results='show'}
+#par(bg=NA)
+
+sort_metric <- fh_hsp_matrix_3rMean$s1/fh_hsp_matrix_3rMean$s5
+#sort_metric2 <- abs(sort_metric - 3)-abs(fh_hsp_matrix_3rMean$s1-5)+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2
+sort_metric2 <- abs(fh_hsp_matrix_3rMean$s1d5/fh_hsp_matrix_3rMean$s5 - 3)-abs(fh_hsp_matrix_3rMean$s1-5)+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2+(fh_hsp_matrix_3rMean$s2d5/fh_hsp_matrix_3rMean$s3)*.85
+
+
+colfunc <- colorRampPalette(c("#C5C5C5","#E4DEEA","#C9BCD6", "#9075ab"))
+colfunc <- colorRampPalette(c("#E4DEEA","#C9BCD6", "#9075ab"))
+
+cutoff <- 1.5
+all_colors_4 <- rep(NA,length(bc_full_list))
+all_colors_4[which(sort_metric <=cutoff)] <- rep("#C5C5C5",length(which(sort_metric <=cutoff)))
+all_colors_4[which(sort_metric >cutoff)] <- colfunc(length(which(sort_metric >cutoff)))[rank(sort_metric[which(sort_metric >cutoff)])]
+
+#all_colors_4 <- colfunc(length(bc_full_list))[rank(sort_metric)]
+#all_colors_4[grep("muta|scr|Kmpra",bc_full_list)] <- "#D7D7D7"
+#all_colors <- color.scale(log(sort_metric+1)^0.5,c(197/255, 246/255, 242/255,232/255),c(197/255, 233/255, 186/255,111/255),c(197/255, 234/255, 190/255,119/255),  color.spec="rgb",xrange = c(min(log(sort_metric+1)^0.5),max(log(sort_metric+1)^0.5)))
+
+plot(c(rep(1,500),rep(1,length(bc_full_list))), col =c(rep("#C5C5C5",500) ,colfunc(length(bc_full_list))), pch = 15, cex = 3,axes = FALSE, ann = FALSE)
+
+
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+
+
+for (i in order(sort_metric2,decreasing = T)) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=alpha(all_colors_4[i],0.66),lwd=1)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+
+}
+### add 33
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+for (i in c("L1_3highH3highF")) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="#6F5688",lwd=3)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+}
+col_bs_case <- c("L1_7highF"="green","chr19_41673159_41673359"="red")
+for (i in c("L1_7highF","chr19_41673159_41673359")) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=col_bs_case[i],lwd=1)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+}
+
+### genomic 
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+
+
+for (i in intersect(order(sort_metric2,decreasing = T),match(genomic_cres_nomut,bc_full_list))) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=alpha(all_colors_4[i],1),lwd=1)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+
+}
+### ctrl 
+
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+
+
+for (i in intersect(order(sort_metric2,decreasing = T),grep("muta|scr|Kmpra",bc_full_list))) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=alpha(all_colors_4[i],1),lwd=1)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+
+}
+
+  ### not fitted
+largeError_list3 <- fh_nonmono
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+
+sort_metric2 <- abs(sort_metric -5)+abs(fh_hsp_matrix_3rMean$s1/fh_hsp_matrix_3rMean$s1d5 )-abs(fh_hsp_matrix_3rMean$s1-10)#+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2
+for (i in intersect(order(sort_metric2,decreasing = T),match(largeError_list3,row.names(fh_hsp_matrix_3rMean)))) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=alpha(all_colors_4[i],1),lwd=1)
+    #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+
+}
+```
+
+### 1
+
+```{r,  eval=T,fig.width=2.9, fig.height=4.5,  echo=F, dpi=600, warning=F, results='show'}
+#par(bg=NA)
+
+target <-  f_hsp_matrix_3rMean
+
+sort_metric <- target$s1/target$s5
+sort_metric2 <- abs(sort_metric - 1.9)*1.2-abs(target$s1-2.5)+(target$s5+target$s4)/1.2
+sort_metric2_f <- sort_metric2
+
+
+colfunc <- colorRampPalette(c("#C5C5C5","#FBE9E9","#F5C6C9", "#E86F77"))
+colfunc <- colorRampPalette(c("#FBE9E9","#F5C6C9", "#E86F77"))
+
+#colfunc <- colorRampPalette(c("#C5C5C5","#F6E9EA","#F2BABE", "#E86F77"))
+#colfunc <- colorRampPalette(c("#C5C5C5","#F6E9EA", "#E86F77"))
+
+all_colors_1 <- rep(NA,length(bc_full_list))
+
+cutoff <- 1.5
+all_colors_1[which(sort_metric <=cutoff)] <- rep("#C5C5C5",length(which(sort_metric <=cutoff)))
+all_colors_1[which(sort_metric >cutoff)] <- colfunc(length(which(sort_metric >cutoff)))[rank(sort_metric[which(sort_metric >cutoff)])]
+#all_colors_1[grep("muta|scr|Kmpra",bc_full_list)] <- "#D7D7D7"
+
+
+#all_colors <- color.scale(log(sort_metric),c(197/255, 246/255, 242/255,232/255),c(197/255, 233/255, 186/255,111/255),c(197/255, 234/255, 190/255,119/255),  color.spec="rgb")
+plot(c(rep(1,500),rep(1,length(bc_full_list))), col =c(rep("#C5C5C5",500) ,colfunc(length(bc_full_list))), pch = 15, cex = 3,axes = FALSE, ann = FALSE)
+
+set_canvas(x=conc_foxa1,xlab="[FOXA1] (nM)",xat=f_c_labels,xlabels = f_c_labels)
+
+
+
+
+
+for (i in order(sort_metric2,decreasing = T)) {
+    lines(conc_foxa1,target[i,],col="white",lwd=1.5)
+  lines(conc_foxa1,target[i,],col=alpha(all_colors_1[i],1),lwd=1)
+}
+
+
+### genomic 
+set_canvas(x=conc_foxa1,xlab="[FOXA1] (nM)",xat=f_c_labels,xlabels=f_c_labels)
+
+for (i in intersect(order(sort_metric2,decreasing = T),match(genomic_cres_nomut,bc_full_list))) {
+    lines(conc_foxa1,target[i,],col="white",lwd=1.5)
+  lines(conc_foxa1,target[i,],col=alpha(all_colors_1[i],1),lwd=1)
+}
+
+### ctrl
+
+set_canvas(x=conc_foxa1,xlab="[FOXA1] (nM)",xat=f_c_labels,xlabels = f_c_labels)
+for (i in intersect(order(sort_metric2,decreasing = T),grep("muta|scr|Kmpra",bc_full_list))) {
+    lines(conc_foxa1,target[i,],col="white",lwd=1.5)
+  lines(conc_foxa1,target[i,],col=alpha(all_colors_1[i],1),lwd=1)
+}
+
+  ### not fitted
+largeError_list <- f_nonmono
+set_canvas(x=conc_foxa1,xlab="[FOXA1] (nM)",xat=f_c_labels,xlabels = f_c_labels)
+sort_metric2 <- abs(sort_metric -1.5)+abs(f_hsp_matrix_3rMean$s1/f_hsp_matrix_3rMean$s1d5 )-abs(f_hsp_matrix_3rMean$s1-3)#+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2
+for (i in intersect(order(sort_metric2,decreasing = T),match(largeError_list,bc_full_list))) {
+    lines(conc_foxa1,target[i,],col="white",lwd=1.5)
+  lines(conc_foxa1,target[i,],col=alpha(all_colors_1[i],1),lwd=1)
+}
+test <- data.frame(f_hsp_matrix_3rMean[largeError_list,]$s5,row.names = largeError_list)
+```
+
+### 3
+
+```{r,  eval=T,fig.width=2.9, fig.height=4.5,  echo=F, dpi=600, warning=F, results='show'}
+#par(bg=NA)
+
+target <-  h_hsp_matrix_3rMean
+
+sort_metric <- target$s1/target$s5
+sort_metric2 <- abs(sort_metric - 1.9)*1.1-abs(target$s1-1.9)+(target$s5+target$s4)/1
+sort_metric2_h <- sort_metric2
+#sort_metric2 <- abs(sort_metric - 1.9)*1.2-abs(target$s1-2.5)+(target$s5+target$s4)/1.2
+
+
+colfunc <- colorRampPalette(c("#C5C5C5","#D2E4F6","#A2C9ED", "#4192D9"))
+colfunc <- colorRampPalette(c("#D2E4F6","#A2C9ED", "#4192D9"))
+
+all_colors_3 <- rep(NA,length(bc_full_list))
+
+all_colors_3[which(sort_metric <=1.5)] <- rep("#C5C5C5",length(which(sort_metric <=1.5)))
+all_colors_3[which(sort_metric >1.5)] <- colfunc(length(which(sort_metric >1.5)))[rank(sort_metric[which(sort_metric >1.5)])]
+#all_colors[grep("muta|scr|Kmpra",bc_full_list)] <- "#D7D7D7"
+
+
+#all_colors_3 <- color.scale(log(sort_metric),c(197/255, 246/255, 242/255,232/255),c(197/255, 233/255, 186/255,111/255),c(197/255, 234/255, 190/255,119/255),  color.spec="rgb")
+plot(c(rep(1,500),rep(1,length(bc_full_list))), col =c(rep("#C5C5C5",500) ,colfunc(length(bc_full_list))), pch = 15, cex = 3,axes = FALSE, ann = FALSE)
+
+ # plot(conc_hnf4a_alone, (c(1:8)-0.995)*36, log = "xy", pch=16, cex=1, col="white",axes = FALSE, ann = FALSE)
+ #  axis(2, at = c(1,5,25,125),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+ #  axis(1, at = h_c_labels2, lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+ #    #  axis(3, at = f_c_labels,labels = h_c_labels, lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+ #    title(ylab="Activity [a.u.]",xlab="[HNF4A] (nM)", line=1.2, cex.lab=1.)
+ #  box()
+set_canvas(x=conc_hnf4a_alone,xlab="[HNF4A] (nM)",xat=h_c_labels2,xlabels = h_c_labels2)
+
+
+
+for (i in order(sort_metric2,decreasing = T)) {
+    lines(conc_hnf4a_alone,target[i,],col="white",lwd=1.5)
+  lines(conc_hnf4a_alone,target[i,],col=alpha(all_colors_3[i],1),lwd=1)
+}
+
+
+  ### genomic 
+set_canvas(x=conc_hnf4a_alone,xlab="[HNF4A] (nM)",xat=h_c_labels2,xlabels=h_c_labels2)
+
+for (i in intersect(order(sort_metric2,decreasing = T),match(genomic_cres_nomut,bc_full_list))) {
+    lines(conc_hnf4a_alone,target[i,],col="white",lwd=1.5)
+  lines(conc_hnf4a_alone,target[i,],col=alpha(all_colors_3[i],1),lwd=1)
+}
+
+### ctrl
+
+set_canvas(x=conc_hnf4a_alone,xlab="[HNF4A] (nM)",xat=h_c_labels2,xlabels = h_c_labels2)
+for (i in intersect(order(sort_metric2,decreasing = T),grep("muta|scr|Kmpra",bc_full_list))) {
+    lines(conc_hnf4a_alone,target[i,],col="white",lwd=1.5)
+  lines(conc_hnf4a_alone,target[i,],col=alpha(all_colors_3[i],1),lwd=1)
+}
+
+  ### not fitted
+largeError_list2 <- h_nonmono
+set_canvas(x=conc_hnf4a_alone,xlab="[HNF4A] (nM)",xat=h_c_labels2,xlabels = h_c_labels2)
+sort_metric2 <- abs(sort_metric -1.5)+abs(h_hsp_matrix_3rMean$s1/h_hsp_matrix_3rMean$s1d5 )-abs(f_hsp_matrix_3rMean$s1-3)#+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2
+for (i in intersect(order(sort_metric2,decreasing = T),match(largeError_list2,bc_full_list))) {
+    lines(conc_hnf4a_alone,target[i,],col="white",lwd=1.5)
+  lines(conc_hnf4a_alone,target[i,],col=alpha(all_colors_3[i],1),lwd=1)
+}
+
+  
+
+test <- data.frame(h_hsp_matrix_3rMean[largeError_list2,]$s1,row.names = largeError_list2)
+
+```
+
+```{r,  eval=T,fig.width=3.5, fig.height=5.5,  echo=F,  warning=F, results='show'}
+set_canvas_noaxis <- function(x,xlab,xat,xlabels="",xaxis=FALSE,yaxis=FALSE){
+   plot(x, (c(1:8)-0.995)*30, log = "xy", pch=16, cex=0, col="white",axes = FALSE, ann = FALSE,ylim=c(0.2,220))
+  if(yaxis){axis(2, at = c(1,5,25,125),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=2, cex.axis=0.8)}
+  if(xaxis){axis(1, at = xat, labels = xlabels,lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)}
+   # title(ylab="Activity [a.u.]",xlab=xlab, line=1.7, cex.lab=0.8)
+  box()
+}
+```
+
+### sets based on BS
+
+```{r,  eval=T,fig.width=3, fig.height=4,  echo=F, dpi=600, warning=F, results='show'}
+
+sort_metric2 <- abs(sort_metric - 3)-abs(fh_hsp_matrix_3rMean$s1-5)+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2
+
+par(mfrow = c(4, 3),
+    mar = c(0, 0, 0, 0),   # inner margins (bottom, left, top, right)
+    oma = c(3, 3, 0, 0))   # outer margins
+### k1f
+one_group <- function(tmp_group,xaxis=FALSE){
+  set_canvas_noaxis(x=conc_foxa1,xlab="",xat=f_c_labels,xlabels = f_c_labels,yaxis=TRUE,xaxis=xaxis)
+for (i in intersect(order(sort_metric2_f,decreasing = T),tmp_group)) {
+    lines(conc_foxa1,f_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+  lines(conc_foxa1,f_hsp_matrix_3rMean[i,],col=alpha(all_colors_1[i],1),lwd=1)
+}
+  legend("topleft", legend = paste0("FC>=2: ",round(length(which(round(k1f_fc[tmp_group,]$fc,1)>=2 ))/length(tmp_group)*100,0),"%"), bty = "n",inset = c(-0.15, 0))
+#  print()
+set_canvas_noaxis(x=conc_hnf4a_alone,xlab="",xat=h_c_labels2,xlabels = h_c_labels2,xaxis=xaxis)
+for (i in intersect(order(sort_metric2_h,decreasing = T),tmp_group)) {
+    lines(conc_hnf4a_alone,h_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+  lines(conc_hnf4a_alone,h_hsp_matrix_3rMean[i,],col=alpha(all_colors_3[i],1),lwd=1)
+}
+  legend("topleft", legend = paste0("FC>=2: ",round(length(which(round(k3h_fc[tmp_group,]$fc,1)>=2 ))/length(tmp_group)*100,0),"%"), bty = "n",inset = c(-0.15, 0))
+ # print(length(which(round(k3h_fc[tmp_group,]$fc,1)>=2 ))/length(tmp_group)*100)
+set_canvas_noaxis(x=fxh_con,xlab="",xat=fh_labels,xlabels=f_c_labels,xaxis=xaxis)
+for (i in intersect(order(sort_metric2,decreasing = T),tmp_group)) {
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col="white",lwd=1.5)
+    lines(fxh_con,fh_hsp_matrix_3rMean[i,],col=alpha(all_colors_4[i],1),lwd=1)
+}
+  legend("topleft", legend = paste0("FC>=2: ",round(length(which(round(k4fh_fc[tmp_group,]$fc,1)>=2 ))/length(tmp_group)*100,0),"%"), bty = "n",inset = c(-0.15, 0))
+ # print(length(which(round(k4fh_fc[tmp_group,]$fc,1)>=2 ))/length(tmp_group)*100)
+}
+#one_group(which(lib1_tfbsn[bc_full_list,]$f<1&lib1_tfbsn[bc_full_list,]$h<1))
+ one_group(grep("muta|scr|Kmpra",bc_full_list))
+# 
+ one_group(which(lib1_tfbsn[bc_full_list,]$f>0&lib1_tfbsn[bc_full_list,]$h<1))
+ one_group(which(lib1_tfbsn[bc_full_list,]$h>0&lib1_tfbsn[bc_full_list,]$f<1))
+ one_group(which(lib1_tfbsn[bc_full_list,]$f>0&lib1_tfbsn[bc_full_list,]$h>0),TRUE)
+```
+
+```{r,  eval=T,fig.width=3, fig.height=4,  echo=F, dpi=600, warning=F, results='show'}
+
+
+par(mfrow = c(4, 3),
+    mar = c(0, 0, 0, 0),   # inner margins (bottom, left, top, right)
+    oma = c(3, 3, 0, 0))   # outer margins
+
+one_group(grep("muta",bc_full_list))
+
+one_group(grep("mutH",bc_full_list))
+one_group(grep("mutF",bc_full_list))
+one_group(match(the100_list,bc_full_list),TRUE)
+one_group(match(the100_list,bc_full_list))
+one_group(grep("mutF",bc_full_list))
+one_group(grep("mutH",bc_full_list))
+one_group(grep("muta",bc_full_list),TRUE)
+
+```
+```{r,  eval=F,fig.width=3, fig.height=4,  echo=F, dpi=600, warning=F, results='show'}
+the100_withboth <- the100_list[which(lib1_tfbsn[the100_list,]$f==0&lib1_tfbsn[the100_list,]$h==0)]
+one_group(match(the100_withboth,bc_full_list))
+
+```
+
+
+### load fitted param
+<br> <br>
+
+```{r,  eval=T,fig.width=4.5, fig.height=3,  echo=F, warning=F, results='show'}
+EC50_col="#F6BE8A"
+n_col="#F5E596"
+FC_col="#A0CE9C"
+
+#gHill_par_foxa1_k1f <- read.table("~/Downloads/gHill_foxa1_k1f_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+#gHill_par_foxa1_k3h <- read.table("~/Downloads/gHill_foxa1_k3h_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+#gHill_par_foxa1_k4fh <- read.table("~/Downloads/gHill_foxa1_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+
+gHill_par_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_par.txt" ,row.names = 1,sep = "\t",header = T)
+# FH n is doubled for interpretation/plotting; use the original fitted n when evaluating FH Hill prediction curves.
+gHill_par_foxa1_k4fh$n <- gHill_par_foxa1_k4fh$n*2
+gHill_par_foxa1_k4fh$EC50 <- gHill_par_foxa1_k4fh$Kd^0.5
+add_regP <- function(gHill_par_foxa1_k1f){
+  gHill_par_foxa1_k1f$regP <- log2(gHill_par_foxa1_k1f$Fmax/gHill_par_foxa1_k1f$basal)
+gHill_par_foxa1_k1f <- gHill_par_foxa1_k1f[, c(setdiff(names(gHill_par_foxa1_k1f), "r2"), "r2")]
+  return(gHill_par_foxa1_k1f)
+}
+
+
+  gHill_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+  gHill_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_allbiostd.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_std_foxa1_k4fh$n <- gHill_std_foxa1_k4fh$n*2
+  ### Hill stderr
+  fit_std_foxa1_k4fh <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k1f <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k1f_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+  fit_std_foxa1_k3h <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k3h_trained_coefstd.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k4fh$synergy <- gHill_par_foxa1_k4fh$regP-(gHill_par_foxa1_k1f$regP+gHill_par_foxa1_k3h$regP)
+fit_std_foxa1_k4fh$n <- fit_std_foxa1_k4fh$n *2
+#smallError_list <- row.names(fit_std_foxa1_k1f)[which(fit_std_foxa1_k1f$Kd<150 & fit_std_foxa1_k1f$n<3 & gHill_par_foxa1_k1f[row.names(fit_std_foxa1_k1f),]$r2>0.9)]
+#hist(log(gHill_std_foxa1_k4fh$Kd))
+
+target <- f_hsp_matrix_3rMean
+target_dev <- f_hsp_matrix_3rDev
+#response <- data.frame(fc=target$s1d5/target$s5,row.names = bc_full_list)
+#response <- data.frame(fc=gHill_par_foxa1_k1f$Fmax/gHill_par_foxa1_k1f$basal,row.names = row.names(gHill_par_foxa1_k1f))
+TF_number <- (read.table("~/mnt/scratch/sequencing/fimoR5_pft_v1/noFOX_highExpr_cre_TFBScount.txt" ,sep = "\t",col.names = c("cre","n"),row.names = 1))
+
+gHill_par_foxa1_k1f$fn <- lib1_tfbsn[bc_full_list,]$f
+gHill_par_foxa1_k3h$fn <- lib1_tfbsn[bc_full_list,]$h
+gHill_par_foxa1_k4fh$fn <- lib1_tfbsn[bc_full_list,]$h + lib1_tfbsn[bc_full_list,]$f
+
+
+  EC_F <- data.frame(ec=(gHill_par_foxa1_k4fh$Kd/0.467)^0.5,row.names = row.names(gHill_par_foxa1_k4fh))
+  EC_H <- data.frame(ec=(gHill_par_foxa1_k4fh$Kd*0.467)^0.5,row.names = row.names(gHill_par_foxa1_k4fh))
+
+
+hist_one <- function(gHill_par_foxa1_k1f,gHill_std_foxa1_k1f,logx=FALSE,column,breaks=100,xlab,color,atx,labelx=atx,aty,outlier=Inf){
+ # smallError_list <- bc_full_list[which(gHill_std_foxa1_k1f[bc_full_list,column]<cutoff*gHill_par_foxa1_k1f[bc_full_list,column] & gHill_par_foxa1_k1f[bc_full_list,column]!=outlier)]
+  smallError_list <- bc_full_list[which(gHill_std_foxa1_k1f[bc_full_list,column]<cutoff*abs(gHill_par_foxa1_k1f[bc_full_list,column]) )]
+  if(logx){
+    x <- log(gHill_par_foxa1_k1f[smallError_list,column])
+  }else{
+    x <- (gHill_par_foxa1_k1f[smallError_list,column])
+  }
+  hist(x,breaks=breaks,xlab=xlab,main="",col=color,border = color,axes=FALSE,ann=FALSE)
+box()
+  axis(2, at = aty,   lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+  axis(1, at = atx, labels=labelx,lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+    title(ylab="Count",xlab=xlab, line=1.5, cex.lab=1.)
+  #print((quantile(x,.75)-quantile(x,.25))/(quantile(x,.75)+quantile(x,.25)))
+  #  print((quantile(x,.75)/quantile(x,.25)))
+  #  print(sd(x))
+
+}
+```
+
+### smooth 
+
+```{r,  eval=T,fig.width=2.9, fig.height=4.5,  echo=F, dpi=600, warning=F, results='show'}
+
+### smooth
+    hill_equation <- function(parS,xx){parS$basal + (parS$Fmax-parS$basal)/(1+(parS$Kd^(parS$n))/(xx^parS$n))}
+add_smooth <- function(fxh_con,gHill_par_foxa1_k4fh, example_seq,col="black"){
+
+    #if(! anyNA(observed)){
+      par_here <- list(basal=gHill_par_foxa1_k4fh[example_seq,]$basal,
+                       Fmax=gHill_par_foxa1_k4fh[example_seq,]$Fmax,
+                       Kd=gHill_par_foxa1_k4fh[example_seq,]$Kd,
+                       n=gHill_par_foxa1_k4fh[example_seq,]$n)
+      #range_x <- exp(c(seq(log(min(fxh_con)/1.),log(max(fxh_con*1.)),0.01)))
+      range_x <- exp(c(seq(log(min(fxh_con)/1.),log(max(fxh_con*1.)),length.out=300)))
+
+      lines(range_x, hill_equation(par_here,range_x), col=alpha("white",1),lwd=1.5)
+            lines(range_x, hill_equation(par_here,range_x), col=alpha(col,1),lwd=1.)
+} 
+
+
+set_canvas(x=fxh_con,xlab="[FOXA1] (nM)",xat=fh_labels,xlabels=f_c_labels)
+add_top_axis()
+
+  
+ sort_metric2 <- abs(fh_hsp_matrix_3rMean$s1d5/fh_hsp_matrix_3rMean$s5 - 3)-abs(fh_hsp_matrix_3rMean$s1-5)+(fh_hsp_matrix_3rMean$s2+fh_hsp_matrix_3rMean$s2d5)/2+(fh_hsp_matrix_3rMean$s2d5/fh_hsp_matrix_3rMean$s3)*.85
+
+gHill_par_foxa1_k4fh_old <- gHill_par_foxa1_k4fh
+# Restore original FH n for prediction curves; gHill_par_foxa1_k4fh keeps doubled n for plots/biology.
+gHill_par_foxa1_k4fh_old$n <- gHill_par_foxa1_k4fh$n/2
+for (i in order(sort_metric2,decreasing = T)) {
+  add_smooth(fxh_con,gHill_par_foxa1_k4fh_old,i,alpha(all_colors_4[i],1))
+      #lines(conc_foxa1,fh_hsp_matrix_3rMean[i,],col=alpha("#E86F77",(sort_metric[i]/max(sort_metric))^0.3),lwd=1)
+
+}
+
+set_canvas(x=conc_foxa1,xlab="[FOXA1] (nM)",xat=f_c_labels,xlabels = f_c_labels)
+
+for (i in order(sort_metric2_f,decreasing = T)) {
+    add_smooth(conc_foxa1,gHill_par_foxa1_k1f,i,alpha(all_colors_1[i],1))
+}
+
+set_canvas(x=conc_hnf4a_alone,xlab="[HNF4A] (nM)",xat=h_c_labels2,xlabels = h_c_labels2)
+
+for (i in order(sort_metric2_h,decreasing = T)) {
+      add_smooth(conc_hnf4a_alone,gHill_par_foxa1_k3h,i,alpha(all_colors_3[i],1))
+}
+```
+
+### predicted activity over basal
+
+```{r,  eval=T, echo=F, warning=F, results='hide'}
+predict_activity_over_basal <- function(conc, par_table) {
+  range_x <- exp(c(seq(log(min(conc)/1.), log(max(conc*1.)), length.out=300)))
+  predicted_activity <- t(sapply(row.names(par_table), function(seq_id) {
+    par_here <- list(basal=par_table[seq_id,]$basal,
+                     Fmax=par_table[seq_id,]$Fmax,
+                     Kd=par_table[seq_id,]$Kd,
+                     n=par_table[seq_id,]$n)
+    hill_equation(par_here, range_x)
+  }))
+  colnames(predicted_activity) <- paste0("c", seq_along(range_x), "_", signif(range_x, 4))
+  
+  log2_activity_over_basal <- log2(predicted_activity/par_table[row.names(predicted_activity),]$basal)
+  colnames(log2_activity_over_basal) <- colnames(predicted_activity)
+  
+  list(conc=range_x,
+       activity=predicted_activity,
+       log2_activity_over_basal=log2_activity_over_basal)
+}
+
+k1f_predicted <- predict_activity_over_basal(conc_foxa1, gHill_par_foxa1_k1f)
+k3h_predicted <- predict_activity_over_basal(conc_hnf4a_alone, gHill_par_foxa1_k3h)
+k4fh_predicted <- predict_activity_over_basal(fxh_con, gHill_par_foxa1_k4fh_old)
+
+k1f_log2_activity_over_basal <- k1f_predicted$log2_activity_over_basal
+k3h_log2_activity_over_basal <- k3h_predicted$log2_activity_over_basal
+k4fh_log2_activity_over_basal <- k4fh_predicted$log2_activity_over_basal
+
+k1f_activity_over_basal_conc <- k1f_predicted$conc
+k3h_activity_over_basal_conc <- k3h_predicted$conc
+k4fh_activity_over_basal_conc <- k4fh_predicted$conc
+```
+
+
+### distribution
+
+```{r,  eval=F,fig.width=4.5, fig.height=3,  echo=F, warning=F, results='show'}
+
+cutoff <- 1
+hist_one(gHill_par_foxa1_k1f,fit_std_foxa1_k1f,TRUE,1,50,expression("EC"["50"]*"-"*"FOXA1"*"(nM)"),EC50_col,log(c(10,25,50,100,200,300)),c(10,25,50,100,200,300),c(0,20,40),2*max(conc_foxa1))
+hist_one(gHill_par_foxa1_k1f,fit_std_foxa1_k1f,FALSE,2,10,"Hill coefficient",n_col,c(1,3,5,7,9),c(1,3,5,7,9),c(0,150,300),10)
+hist_one(gHill_par_foxa1_k1f,fit_std_foxa1_k1f,FALSE,5,100,"RegP",FC_col,c(0,1,2,3),c(0,1,2,3),c(0,25,50))
+
+hist_one(gHill_par_foxa1_k3h,fit_std_foxa1_k3h,TRUE,1,25,expression("EC"["50"]*"-"*"HNF4A"*"(nM)"),EC50_col,log(c(5,10,20,50)),c(5,10,20,50),c(0,25,50),2*max(conc_foxa1))
+hist_one(gHill_par_foxa1_k3h,fit_std_foxa1_k3h,FALSE,2,10,"Hill coefficient",n_col,c(1,3,5,7,9),c(1,3,5,7,9),c(0,300,600),10)
+hist_one(gHill_par_foxa1_k3h,fit_std_foxa1_k3h,FALSE,5,100,"RegP",FC_col,c(0,1,2,3),c(0,1,2,3),c(0,50,100))
+
+#hist_one(gHill_par_foxa1_k4fh,fit_std_foxa1_k4fh,TRUE,1,50,"EC50",EC50_col,log(c(5,10,20,50)/3.2319466),c(5,10,20,50),c(0,40,80),2*max(conc_foxa1))
+hist_one(gHill_par_foxa1_k4fh,fit_std_foxa1_k4fh,FALSE,2,6,"Hill coefficient",n_col,c(1,3,5,7,9),c(1,3,5,7,9),c(0,400,800),10)
+hist_one(gHill_par_foxa1_k4fh,fit_std_foxa1_k4fh,FALSE,5,75,"RegP",FC_col,c(0,2,4,6),c(0,2,4,6),c(0,25,50))
+
+
+
+
+  smallError_list <- bc_full_list[which(fit_std_foxa1_k4fh[bc_full_list,1]<cutoff*abs(gHill_par_foxa1_k4fh[bc_full_list,1]) )]
+    x <- log(gHill_par_foxa1_k4fh[smallError_list,1])
+
+  hist(x,breaks=50,xlab="EC50",main="",col=EC50_col,border = EC50_col,axes=FALSE,ann=FALSE)
+box()
+  axis(2, at = c(0,40,80),   lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+  axis(1, at = log(c(25,50,100,200)^2*0.467), labels=c(25,50,100,200),lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+  axis(3, at = log(c(5,10,20,50)^2/0.467), labels=c(5,10,20,50),lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+    title(ylab="Counts",xlab=expression("EC"["50"]*"-"*"FOXA1"*"(nM)"), line=1.5, cex.lab=1.)
+
+
+  
+
+# hist(log(EC_F[smallError_list3,]),breaks=100,xlab="FOXA1 EC50",main="",col=EC50_col,border = EC50_col,axes=F)
+# box()
+#   axis(2, at = c(0,35,70),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+#   axis(1, at = log(c(10,20,500,100,200)),labels = c(10,20,500,100,200), lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+# 
+#   hist(log(EC_H[smallError_list3,]),breaks=100,xlab="HNF4A EC50",main="",col=EC50_col,border = EC50_col,axes=F)
+# box()
+#   axis(2, at = c(0,35,70),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+#   axis(1, at = log(c(2,5,10,20)),labels  = (c(2,5,10,20)), lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+```
+
+
+### no use -- success fit 
+  
+```{r ,  eval=F,fig.width=3, fig.height=3.5,  echo=F,  warning=F, results='show'}
+
+#length(bc_full_list[which(gHill_par_foxa1_k1f$r2<0.9)])  
+
+    r2_cut <- 0.
+portion_cut <- 1
+smallError_list <- bc_full_list[which(fit_std_foxa1_k1f[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$n & fit_std_foxa1_k1f[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$Kd & gHill_par_foxa1_k1f[bc_full_list,]$r2>r2_cut ) ]
+largeError_list <-setdiff(bc_full_list,smallError_list)
+length(smallError_list)/2021
+
+k1f_s <- length(intersect(smallError_list,genomic_cres_nomut))/length(genomic_cres_nomut)
+k1f_s <- length(intersect(smallError_list,control_cres))/length(control_cres)
+
+boxplot(k1f_fc[smallError_list,],k1f_fc[largeError_list,])
+boxplot(kd_score_F_table[smallError_list,]$kas,kd_score_F_table[largeError_list,]$kas)
+
+smallError_list2 <- bc_full_list[which(fit_std_foxa1_k3h[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$n & fit_std_foxa1_k3h[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$Kd & gHill_par_foxa1_k3h[bc_full_list,]$r2>r2_cut )]
+largeError_list2 <-setdiff(bc_full_list,smallError_list2)
+length(smallError_list2)/2021
+
+smallError_list3 <- bc_full_list[which(fit_std_foxa1_k4fh[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$n & fit_std_foxa1_k4fh[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$Kd & gHill_par_foxa1_k4fh[bc_full_list,]$r2>r2_cut )]
+largeError_list3 <-setdiff(bc_full_list,smallError_list3)
+length(smallError_list3)/2021
+
+length(c(smallError_list,smallError_list2,smallError_list3))/(3*2021)
+
+final_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+```
+
+
+```{r ,  eval=F,fig.width=3, fig.height=3.5,  echo=F,  warning=F, results='show'}
+
+  
+    r2_cut <- 0.
+portion_cut <- .5
+smallError_list <- smallError_list[which(gHill_par_foxa1_k1f[smallError_list,]$Kd < max(conc_foxa1) )]
+largeError_list <-setdiff(bc_full_list,smallError_list)
+length(smallError_list)/2021
+
+boxplot(k1f_fc[smallError_list,],k1f_fc[largeError_list,])
+boxplot(kd_score_F_table[smallError_list,]$kas,kd_score_F_table[largeError_list,]$kas)
+
+smallError_list2 <- smallError_list2[which(gHill_par_foxa1_k3h[smallError_list2,]$Kd < max(conc_hnf4a_alone))]
+largeError_list2 <-setdiff(bc_full_list,smallError_list2)
+boxplot(k3h_fc[smallError_list2,],k3h_fc[largeError_list2,])
+boxplot(kd_score_H_table[smallError_list2,]$kas,kd_score_H_table[largeError_list2,]$kas)
+length(smallError_list2)/2021
+
+smallError_list3 <- smallError_list3[which(gHill_par_foxa1_k4fh[smallError_list3,]$Kd < max(conc_hnf4a*conc_foxa1))]
+largeError_list3 <-setdiff(bc_full_list,smallError_list3)
+boxplot(k4fh_fc[smallError_list3,],k4fh_fc[largeError_list3,])
+boxplot(kd_score_F_table[smallError_list3,]$kas,kd_score_F_table[largeError_list3,]$kas)
+length(smallError_list3)/2021
+
+length(c(smallError_list,smallError_list2,smallError_list3))/(3*2021)
+
+final_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+```
+
+### set cutoff
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F,  warning=F, results='show'}
+#par(bg=NA)
+  
+    r2_cut <- 0.
+portion_cut <- 1
+smallError_list <- bc_full_list[which(gHill_par_foxa1_k1f[bc_full_list,]$r2> r2_cut & (fit_std_foxa1_k1f[bc_full_list,]$n)<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$n & (fit_std_foxa1_k1f[bc_full_list,]$Kd)<portion_cut*gHill_par_foxa1_k1f[bc_full_list,]$Kd & gHill_par_foxa1_k1f[bc_full_list,]$Kd < max(conc_foxa1) 
+                                      &  abs(log10(gHill_par_foxa1_k1f[bc_full_list,]$n))<1)]
+largeError_list <-setdiff(bc_full_list,smallError_list)
+test <- fit_std_foxa1_k1f[smallError_list,]
+
+smallError_list2 <- bc_full_list[which(gHill_par_foxa1_k3h[bc_full_list,]$r2> r2_cut  & fit_std_foxa1_k3h[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$n & fit_std_foxa1_k3h[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k3h[bc_full_list,]$Kd & gHill_par_foxa1_k3h[bc_full_list,]$Kd < max(conc_hnf4a_alone)
+                                       &  abs(log10(gHill_par_foxa1_k3h[bc_full_list,]$n))<1)]
+largeError_list2 <-setdiff(bc_full_list,smallError_list2)
+test <- fit_std_foxa1_k3h[smallError_list2,]
+
+smallError_list3 <- bc_full_list[which(gHill_par_foxa1_k4fh[bc_full_list,]$r2> r2_cut & fit_std_foxa1_k4fh[bc_full_list,]$n<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$n & fit_std_foxa1_k4fh[bc_full_list,]$Kd<portion_cut*gHill_par_foxa1_k4fh[bc_full_list,]$Kd & gHill_par_foxa1_k4fh[bc_full_list,]$Kd < max(conc_hnf4a*conc_foxa1)
+                                        &  abs(log10(gHill_par_foxa1_k4fh[bc_full_list,]$n))<1)]
+largeError_list3 <-setdiff(bc_full_list,smallError_list3)
+#test <- fit_std_foxa1_k4fh[smallError_list3,]
+#test <- data.frame(k4fh_fc[largeError_list3,],row.names = largeError_list3)
+#boxplot(k4fh_fc[smallError_list3,],k4fh_fc[largeError_list3,])
+lasttwo_fc <- data.frame(fc=fh_hsp_matrix_3rMean$s1/fh_hsp_matrix_3rMean$s1d5,row.names = row.names(fh_hsp_matrix_3rMean))
+boxplot(lasttwo_fc[smallError_list3,],lasttwo_fc[largeError_list3,])
+plot(lasttwo_fc[largeError_list3,],k4fh_fc[largeError_list3,]$fc)
+
+
+final_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+length(final_smallError)
+
+length(Reduce(union, list(smallError_list3, smallError_list2, smallError_list)))/2021
+
+sets <- list(
+  "F" = smallError_list,
+  "H" = smallError_list2,
+     "FH" = smallError_list3
+ )
+
+library(ggVennDiagram)
+
+p <- ggVennDiagram(sets, label_alpha = 0) +
+  scale_fill_gradient(low = "white", high = "steelblue")
+p
+
+
+fit <- euler(sets)     # same 'sets' list as above
+plot(fit, quantities = TRUE)
+plot(fit, quantities = TRUE,
+     fills = list(fill=NA, alpha=0),
+     edges = list(col=c("#E86F77","#4192D9","#9075ab"), lwd=4))
+```
+
+### predicted dual effect over single effects
+
+```{r,  eval=T,fig.width=3.2, fig.height=4,  echo=F, warning=F, results='hide',dpi=300}
+predict_log2_activity_over_basal_at <- function(conc, par_table) {
+  predicted_activity <- t(sapply(row.names(par_table), function(seq_id) {
+    par_here <- list(basal=par_table[seq_id,]$basal,
+                     Fmax=par_table[seq_id,]$Fmax,
+                     Kd=par_table[seq_id,]$Kd,
+                     n=par_table[seq_id,]$n)
+    hill_equation(par_here, conc)
+  }))
+  colnames(predicted_activity) <- paste0("c", seq_along(conc), "_", signif(conc, 4))
+  log2(predicted_activity/par_table[row.names(predicted_activity),]$basal)
+}
+
+fh_diag_n <- 300
+fh_diag_ratio <- 0.467
+f_conc_peak_range <- c(0.1, 500)
+f_conc_plot_range <- c(1, 200)
+f_conc_pseudo_inf <- 220
+f_conc_diag <- exp(seq(log(f_conc_plot_range[1]), log(f_conc_plot_range[2]), length.out=fh_diag_n))
+h_conc_diag <- fh_diag_ratio*f_conc_diag
+fh_conc_diag <- f_conc_diag * h_conc_diag
+fh_conc_peak_range <- fh_diag_ratio*f_conc_peak_range^2
+fh_diag_f_labels <- f_c_labels
+fh_diag_h_labels <- signif(fh_diag_ratio*fh_diag_f_labels,2)
+fh_diag_axis_at <- fh_diag_ratio*fh_diag_f_labels^2
+
+k1f_log2_diag <- predict_log2_activity_over_basal_at(f_conc_diag, gHill_par_foxa1_k1f)
+k3h_log2_diag <- predict_log2_activity_over_basal_at(h_conc_diag, gHill_par_foxa1_k3h)
+k4fh_log2_diag <- predict_log2_activity_over_basal_at(fh_conc_diag, gHill_par_foxa1_k4fh_old)
+
+common_seq <- Reduce(intersect, list(final_smallError,
+                                     row.names(k1f_log2_diag),
+                                     row.names(k3h_log2_diag),
+                                     row.names(k4fh_log2_diag)))
+k4fh_over_single_log2_diag <- k4fh_log2_diag[common_seq,] -
+  (k1f_log2_diag[common_seq,] + k3h_log2_diag[common_seq,])
+
+k4fh_over_single_log2_summary <- data.frame(
+  f_conc=f_conc_diag,
+  h_conc=h_conc_diag,
+  fh_conc=fh_conc_diag,
+  median=apply(k4fh_over_single_log2_diag, 2, median, na.rm=TRUE),
+  q25=apply(k4fh_over_single_log2_diag, 2, quantile, probs=0.25, na.rm=TRUE),
+  q75=apply(k4fh_over_single_log2_diag, 2, quantile, probs=0.75, na.rm=TRUE)
+)
+k4fh_over_single_log2_summary <- k4fh_over_single_log2_summary[order(k4fh_over_single_log2_summary$fh_conc),]
+
+hepG2_foxa1_conc <- 49.27642992
+hepG2_hnf4a_conc <- 26.53009141
+predict_log2_activity_scalar <- function(conc, par_table, seq_id) {
+  par_here <- list(
+    basal=par_table[seq_id,]$basal,
+    Fmax=par_table[seq_id,]$Fmax,
+    Kd=par_table[seq_id,]$Kd,
+    n=par_table[seq_id,]$n
+  )
+  log2(hill_equation(par_here, conc)/par_here$basal)
+}
+hepG2_synergy_for_diag <- setNames(sapply(common_seq, function(seq_id) {
+  predict_log2_activity_scalar(
+    hepG2_foxa1_conc*hepG2_hnf4a_conc,
+    gHill_par_foxa1_k4fh_old,
+    seq_id
+  ) -
+    (predict_log2_activity_scalar(
+      hepG2_foxa1_conc,
+      gHill_par_foxa1_k1f,
+      seq_id
+    ) + predict_log2_activity_scalar(
+      hepG2_hnf4a_conc,
+      gHill_par_foxa1_k3h,
+      seq_id
+    ))
+}), common_seq)
+gHill_par_foxa1_k4fh[common_seq, "hepG2_synergy"] <-
+  hepG2_synergy_for_diag[common_seq]
+
+#synergy_for_diag <- gHill_par_foxa1_k4fh[common_seq,]$synergy
+synergy_for_diag <- gHill_par_foxa1_k4fh[common_seq,]$hepG2_synergy
+finite_synergy <- is.finite(synergy_for_diag)
+synergy_scaled <- rep(NA_real_, length(synergy_for_diag))
+min_negative_synergy <- min(c(0, synergy_for_diag[finite_synergy]))
+max_positive_synergy <- max(c(0, synergy_for_diag[finite_synergy]))
+
+# Give the negative range 1/7 the visual span of the positive range:
+# negative occupies 1/8 of the bar and positive occupies the remaining 7/8.
+synergy_zero_position <- 1/8
+synergy_scaled[finite_synergy] <- synergy_zero_position
+
+negative_synergy <- finite_synergy & synergy_for_diag < 0
+if (min_negative_synergy < 0) {
+  synergy_scaled[negative_synergy] <-
+    synergy_zero_position *
+    (synergy_for_diag[negative_synergy] - min_negative_synergy) /
+    -min_negative_synergy
+}
+
+positive_synergy <- finite_synergy & synergy_for_diag > 0
+if (max_positive_synergy > 0) {
+  synergy_scaled[positive_synergy] <-
+    synergy_zero_position + (1 - synergy_zero_position) *
+    synergy_for_diag[positive_synergy] / max_positive_synergy
+}
+
+synergy_palette_positions <- seq(0, 1, length.out = 101)
+synergy_anchor_rgb <- col2rgb(c("#F4E1A1", "gray", synergy_col))
+synergy_palette <- rgb(
+  approx(c(0, synergy_zero_position, 1), synergy_anchor_rgb[1, ],
+         xout = synergy_palette_positions)$y,
+  approx(c(0, synergy_zero_position, 1), synergy_anchor_rgb[2, ],
+         xout = synergy_palette_positions)$y,
+  approx(c(0, synergy_zero_position, 1), synergy_anchor_rgb[3, ],
+         xout = synergy_palette_positions)$y,
+  maxColorValue = 255
+)
+synergy_col_index <- pmax(1, pmin(101, round(synergy_scaled*100)+1))
+synergy_line_col <- setNames(synergy_palette[synergy_col_index], common_seq)
+```
+
+```{r ,  eval=T,fig.width=3.5, fig.height=4.25,  echo=F, warning=F, results='show'}
+predict_log2_activity_over_basal_one <- function(conc, par_table, seq_id) {
+  par_here <- list(basal=par_table[seq_id,]$basal,
+                   Fmax=par_table[seq_id,]$Fmax,
+                   Kd=par_table[seq_id,]$Kd,
+                   n=par_table[seq_id,]$n)
+  log2(hill_equation(par_here, conc)/par_here$basal)
+}
+
+diag_conc_from_fh <- function(fh_conc) {
+  f_conc <- sqrt(fh_conc/fh_diag_ratio)
+  h_conc <- fh_diag_ratio*f_conc
+  data.frame(f_conc=f_conc, h_conc=h_conc, fh_conc=fh_conc)
+}
+
+dual_over_single_log2_at_fh <- function(fh_conc, seq_id) {
+  diag_conc <- diag_conc_from_fh(fh_conc)
+  predict_log2_activity_over_basal_one(diag_conc$fh_conc, gHill_par_foxa1_k4fh_old, seq_id) -
+    (predict_log2_activity_over_basal_one(diag_conc$f_conc, gHill_par_foxa1_k1f, seq_id) +
+       predict_log2_activity_over_basal_one(diag_conc$h_conc, gHill_par_foxa1_k3h, seq_id))
+}
+
+dual_over_single_log2_at_f_h <- function(f_conc, h_conc, seq_id) {
+  predict_log2_activity_over_basal_one(f_conc*h_conc, gHill_par_foxa1_k4fh_old, seq_id) -
+    (predict_log2_activity_over_basal_one(f_conc, gHill_par_foxa1_k1f, seq_id) +
+       predict_log2_activity_over_basal_one(h_conc, gHill_par_foxa1_k3h, seq_id))
+}
+
+find_real_max_dual_over_single <- function(seq_id) {
+  log_fh_range <- log(fh_conc_peak_range)
+  opt <- optimize(function(log_fh) {
+    -dual_over_single_log2_at_fh(exp(log_fh), seq_id)
+  }, interval=log_fh_range)
+  finite_fh <- exp(opt$minimum)
+  finite_value <- -opt$objective
+  low_range_value <- dual_over_single_log2_at_fh(exp(log_fh_range[1]), seq_id)
+  high_range_value <- dual_over_single_log2_at_fh(exp(log_fh_range[2]), seq_id)
+  edge_tolerance <- 1e-4
+  if (high_range_value >= finite_value - edge_tolerance &&
+      high_range_value >= low_range_value) {
+    return(data.frame(max_dual_over_single=gHill_par_foxa1_k4fh[seq_id,]$synergy,
+                      f_conc_at_max=Inf,
+                      h_conc_at_max=Inf,
+                      fh_conc_at_max=Inf,
+                      max_location="monotonic_increasing"))
+  }
+  if (low_range_value >= finite_value - edge_tolerance &&
+      low_range_value >= high_range_value) {
+    return(data.frame(max_dual_over_single=0,
+                      f_conc_at_max=0,
+                      h_conc_at_max=0,
+                      fh_conc_at_max=0,
+                      max_location="monotonic_decreasing"))
+  }
+  low_value <- 0
+  high_value <- gHill_par_foxa1_k4fh[seq_id,]$synergy
+  max_value <- max(c(low_value, high_value, finite_value), na.rm=TRUE)
+  if (isTRUE(all.equal(max_value, high_value, tolerance=1e-6))) {
+    return(data.frame(max_dual_over_single=high_value,
+                      f_conc_at_max=Inf,
+                      h_conc_at_max=Inf,
+                      fh_conc_at_max=Inf,
+                      max_location="monotonic_increasing"))
+  }
+  if (isTRUE(all.equal(max_value, low_value, tolerance=1e-6))) {
+    return(data.frame(max_dual_over_single=low_value,
+                      f_conc_at_max=0,
+                      h_conc_at_max=0,
+                      fh_conc_at_max=0,
+                      max_location="monotonic_decreasing"))
+  }
+  diag_conc <- diag_conc_from_fh(finite_fh)
+  data.frame(max_dual_over_single=finite_value,
+             f_conc_at_max=diag_conc$f_conc,
+             h_conc_at_max=diag_conc$h_conc,
+             fh_conc_at_max=diag_conc$fh_conc,
+             max_location="finite_peak")
+}
+
+k4fh_over_single_max_conc <- do.call(rbind, lapply(common_seq, find_real_max_dual_over_single))
+k4fh_over_single_max_conc$seqID <- common_seq
+k4fh_over_single_max_conc$synergy <- gHill_par_foxa1_k4fh[common_seq,]$synergy
+row.names(k4fh_over_single_max_conc) <- common_seq
+k4fh_over_single_max_conc$hepG2_synergy <- sapply(
+  common_seq,
+  function(seq_id) {
+    dual_over_single_log2_at_f_h(hepG2_foxa1_conc, hepG2_hnf4a_conc, seq_id)
+  }
+)
+fh_conc_plot_min <- fh_diag_ratio*f_conc_plot_range[1]^2
+fh_conc_plot_max <- fh_diag_ratio*f_conc_plot_range[2]^2
+fh_conc_pseudo_inf <- fh_diag_ratio*f_conc_pseudo_inf^2
+k4fh_over_single_max_conc$fh_conc_at_max_plot <- ifelse(k4fh_over_single_max_conc$fh_conc_at_max == 0,
+                                                         fh_conc_plot_min,
+                                                         ifelse(is.infinite(k4fh_over_single_max_conc$fh_conc_at_max),
+                                                                fh_conc_pseudo_inf,
+                                                                k4fh_over_single_max_conc$fh_conc_at_max))
+
+k4fh_over_single_max_conc <- k4fh_over_single_max_conc[order(k4fh_over_single_max_conc$fh_conc_at_max),]
+# plot_order_regP_synergy <- common_seq[
+#   order(gHill_par_foxa1_k4fh[common_seq,]$synergy, decreasing=TRUE)
+# ]
+plot_order_hepG2_synergy <- common_seq[
+  order(gHill_par_foxa1_k4fh[common_seq,]$hepG2_synergy, decreasing=TRUE)
+]
+#head(k4fh_over_single_max_conc)
+
+plot(k4fh_over_single_log2_summary$fh_conc,
+     k4fh_over_single_log2_summary$median,
+     log="x", type="n", axes=FALSE, ann=FALSE,
+     ylim=range(k4fh_over_single_log2_diag, finite=TRUE))
+for (seq_id in plot_order_hepG2_synergy) {
+  lines(fh_conc_diag, k4fh_over_single_log2_diag[seq_id,],
+        col="white", lwd=1.5)
+  lines(fh_conc_diag, k4fh_over_single_log2_diag[seq_id,],
+        col=alpha(synergy_line_col[seq_id], 1), lwd=1)
+}
+axis(1, at=fh_diag_axis_at, labels=fh_diag_f_labels, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+axis(3, at=fh_diag_axis_at, labels=fh_diag_h_labels, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=1.78, cex.axis=0.8)
+axis(2, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.4, cex.axis=0.8)
+title(xlab="[FOXA1] (nM)", ylab="FH - (F + H)", line=1.5, cex.lab=1)
+abline(h=0, col=alpha("gray25", 2/3), lty=5, lwd=1.2)
+abline(v=1306.45, col=alpha("gray25", 2/3), lty=5, lwd=1.2)
+box()
+
+max_location_summary <- data.frame(table(k4fh_over_single_max_conc$max_location))
+colnames(max_location_summary) <- c("max_location","n")
+max_location_summary$percent <- 100*max_location_summary$n/sum(max_location_summary$n)
+max_location_summary ## 91.355599 % peak in tested range
+
+plot(k4fh_over_single_log2_summary$fh_conc,
+     k4fh_over_single_log2_summary$median,
+     log="x", type="n", axes=FALSE, ann=FALSE,
+     xlim=c(fh_conc_plot_min, fh_conc_plot_max),
+     ylim=range(k4fh_over_single_log2_diag, finite=TRUE))
+for (seq_id in plot_order_hepG2_synergy) {
+  lines(fh_conc_diag, k4fh_over_single_log2_diag[seq_id,],
+        col="white", lwd=1.5)
+  lines(fh_conc_diag, k4fh_over_single_log2_diag[seq_id,],
+        col=alpha(synergy_line_col[seq_id], 1), lwd=1)
+}
+f_conc_titrated_range <- range(conc_foxa1)
+titrated_peak_seq <- row.names(k4fh_over_single_max_conc)[
+  k4fh_over_single_max_conc$max_location == "finite_peak" &
+    k4fh_over_single_max_conc$f_conc_at_max >= f_conc_titrated_range[1] &
+    k4fh_over_single_max_conc$f_conc_at_max <= f_conc_titrated_range[2]
+]
+for (seq_id in titrated_peak_seq) {
+  points(k4fh_over_single_max_conc[seq_id,]$fh_conc_at_max,
+         k4fh_over_single_max_conc[seq_id,]$max_dual_over_single,
+         pch=21, cex=0.55, lwd=0.45,
+         col=alpha("black",0.75),
+         bg=alpha(synergy_line_col[seq_id],0.7))
+}
+axis(1, at=fh_diag_axis_at,
+     labels=fh_diag_f_labels, lwd=1, tck=-0.015,
+     col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+axis(3, at=fh_diag_axis_at,
+     labels=fh_diag_h_labels, lwd=1, tck=-0.015,
+     col=rgb(0,0,0,0), col.ticks="black", padj=1.78, cex.axis=0.8)
+axis(2, lwd=1, tck=-0.015, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.6, cex.axis=0.8)
+title(xlab="[FOXA1] (nM)", ylab="FH - (F + H)", line=1.5, cex.lab=1)
+abline(h=0, col=alpha("gray20", 2/3), lty=5, lwd=1.2)
+abline(v=49.27642992*26.53009141, col=alpha("gray20", 2/3), lty=5, lwd=1.2)
+box()
+```
+
+```{r, eval=T, fig.width=1.25, fig.height=2.5, echo=F, warning=F, results='show', dpi=300}
+par(mar = c(0.5, 0.5, 0.5, 3.5))
+
+plot.new()
+plot.window(xlim = c(0, 1), ylim = c(0, 1), xaxs = "i", yaxs = "i")
+
+synergy_legend_edges <- seq(0, 1, length.out = length(synergy_palette) + 1)
+for (i in seq_along(synergy_palette)) {
+  rect(
+    0, synergy_legend_edges[i],
+    1, synergy_legend_edges[i + 1],
+    col = synergy_palette[i], border = NA
+  )
+}
+rect(0, 0, 1, 1, border = "gray30", lwd = 0.6)
+
+axis(
+  4,
+  at = c(0, synergy_zero_position, 1),
+  labels = signif(c(min_negative_synergy, 0, max_positive_synergy), 2),
+  las = 1,
+  lwd = 0,
+  lwd.ticks = 0.7,
+  tck = -0.015,
+  cex.axis = 0.8,
+  padj = 0.5
+)
+mtext("HepG2 synergy", side = 4, line = 2.5, cex = 0.8)
+```
+
+```{r, eval=T, fig.width=2, fig.height=3, echo=F, warning=F, results='show', dpi=300}
+f_conc_low_range <- c(0.02,1)
+f_conc_low <- exp(seq(log(f_conc_low_range[1]),
+                      log(f_conc_low_range[2]),
+                      length.out=fh_diag_n))
+h_conc_low <- fh_diag_ratio*f_conc_low
+fh_conc_low <- f_conc_low*h_conc_low
+k1f_log2_low <- predict_log2_activity_over_basal_at(
+  f_conc_low, gHill_par_foxa1_k1f
+)
+k3h_log2_low <- predict_log2_activity_over_basal_at(
+  h_conc_low, gHill_par_foxa1_k3h
+)
+k4fh_log2_low <- predict_log2_activity_over_basal_at(
+  fh_conc_low, gHill_par_foxa1_k4fh_old
+)
+k4fh_over_single_log2_low <- k4fh_log2_low[common_seq,] -
+  (k1f_log2_low[common_seq,] + k3h_log2_low[common_seq,])
+fh_conc_low_lims <- fh_diag_ratio*f_conc_low_range^2
+f_conc_low_ticks <- c(0.1,0.2,0.5,1)
+h_conc_low_ticks <- signif(fh_diag_ratio*f_conc_low_ticks,2)
+fh_conc_low_ticks <- fh_diag_ratio*f_conc_low_ticks^2
+
+plot(fh_conc_low,k4fh_over_single_log2_low[1,],
+     log="x",type="n",axes=FALSE,ann=FALSE,
+     xlim=c(0.0001,fh_conc_low_lims[2]),
+     ylim= c(-1,1))#range(k4fh_over_single_log2_diag,finite=TRUE))
+for (seq_id in plot_order_hepG2_synergy) {
+  lines(fh_conc_low,k4fh_over_single_log2_low[seq_id,],
+        col="white",lwd=1.5)
+  lines(fh_conc_low,k4fh_over_single_log2_low[seq_id,],
+        col=alpha(synergy_line_col[seq_id],1),lwd=1)
+}
+ axis(1,at=c(min(fh_conc_low_lims)),labels=c(0),
+      lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+      padj=-2,cex.axis=0.8)
+# axis(3,at=fh_conc_low_ticks,labels=h_conc_low_ticks,
+#      lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+#      padj=1.78,cex.axis=0.8)
+axis(2,lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+     padj=1.4,cex.axis=0.8)
+#title(xlab="[FOXA1] (nM)",ylab="FH - (F + H)",line=1.5,cex.lab=1)
+abline(h=0,col=alpha("black",0.8),lty=5,lwd=1.2)
+box()
+```
+
+```{r, eval=T, fig.width=2.8, fig.height=3.3, echo=F, warning=F, results='show'}
+max_vs_scalar_df <- k4fh_over_single_max_conc[complete.cases(k4fh_over_single_max_conc[,c("max_dual_over_single","synergy")]),]
+max_vs_scalar_lims <- range(c(max_vs_scalar_df$max_dual_over_single,
+                              max_vs_scalar_df$synergy), finite=TRUE)
+max_vs_scalar_at <- pretty(max_vs_scalar_lims, n=4)
+max_vs_scalar_pch <- ifelse(max_vs_scalar_df$max_location == "finite_peak", 21,
+                            ifelse(max_vs_scalar_df$max_location == "monotonic_increasing", 24, 25))
+plot(max_vs_scalar_df$max_dual_over_single,
+     max_vs_scalar_df$synergy,
+     type="n", axes=FALSE, ann=FALSE,
+     xlim=max_vs_scalar_lims, ylim=max_vs_scalar_lims)
+new_diag(par("usr"))
+points(max_vs_scalar_df$max_dual_over_single,
+       max_vs_scalar_df$synergy,
+       pch=max_vs_scalar_pch, cex=0.7, lwd=0.45,
+       col="black", bg=alpha(synergy_line_col[row.names(max_vs_scalar_df)], 1))
+axis(1, at=max_vs_scalar_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+axis(2, at=max_vs_scalar_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=1.8, cex.axis=0.8)
+title(xlab="Max FH - (F + H)", ylab="RegP synergy", line=1.8, cex.lab=1)
+R_max_scalar <- cor(max_vs_scalar_df$max_dual_over_single, max_vs_scalar_df$synergy, use="complete.obs")
+text(par("usr")[1] + 0.08*diff(par("usr")[1:2]),
+     par("usr")[4] - 0.08*diff(par("usr")[3:4]),
+     labels=paste0("R = ", signif(R_max_scalar, 2)),
+     adj=c(0,1), cex=0.8)
+box()
+invisible(R_max_scalar)
+
+hepG2_vs_scalar_df <- k4fh_over_single_max_conc[
+  complete.cases(k4fh_over_single_max_conc[,c("hepG2_synergy","synergy")]),]
+hepG2_vs_scalar_lims <- range(c(hepG2_vs_scalar_df$hepG2_synergy,
+                                hepG2_vs_scalar_df$synergy), finite=TRUE)
+hepG2_vs_scalar_at <- pretty(hepG2_vs_scalar_lims, n=4)
+hepG2_vs_scalar_pch <- ifelse(hepG2_vs_scalar_df$max_location == "finite_peak", 21,
+                              ifelse(hepG2_vs_scalar_df$max_location == "monotonic_increasing", 24, 25))
+plot(hepG2_vs_scalar_df$hepG2_synergy,
+     hepG2_vs_scalar_df$synergy,
+     type="n", axes=FALSE, ann=FALSE,
+     xlim=hepG2_vs_scalar_lims, ylim=hepG2_vs_scalar_lims)
+new_diag(par("usr"))
+points(hepG2_vs_scalar_df$hepG2_synergy,
+       hepG2_vs_scalar_df$synergy,
+       pch=hepG2_vs_scalar_pch, cex=0.7, lwd=0.45,
+       col="black", bg=alpha(synergy_line_col[row.names(hepG2_vs_scalar_df)], 1))
+axis(1, at=hepG2_vs_scalar_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+axis(2, at=hepG2_vs_scalar_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=1.8, cex.axis=0.8)
+title(xlab="HepG2 synergy", ylab="RegP synergy", line=1.8, cex.lab=1)
+R_hepG2_scalar <- cor(hepG2_vs_scalar_df$hepG2_synergy, hepG2_vs_scalar_df$synergy, use="complete.obs")
+text(par("usr")[1] + 0.08*diff(par("usr")[1:2]),
+     par("usr")[4] - 0.08*diff(par("usr")[3:4]),
+     labels=paste0("R = ", signif(R_hepG2_scalar, 2)),
+     adj=c(0,1), cex=0.8)
+box()
+invisible(R_hepG2_scalar)
+
+max_vs_hepG2_df <- k4fh_over_single_max_conc[
+  complete.cases(k4fh_over_single_max_conc[,c("max_dual_over_single","hepG2_synergy")]),]
+max_vs_hepG2_lims <- range(c(max_vs_hepG2_df$max_dual_over_single,
+                             max_vs_hepG2_df$hepG2_synergy), finite=TRUE)
+max_vs_hepG2_at <- pretty(max_vs_hepG2_lims, n=4)
+max_vs_hepG2_pch <- ifelse(max_vs_hepG2_df$max_location == "finite_peak", 21,
+                           ifelse(max_vs_hepG2_df$max_location == "monotonic_increasing", 24, 25))
+plot(max_vs_hepG2_df$max_dual_over_single,
+     max_vs_hepG2_df$hepG2_synergy,
+     type="n", axes=FALSE, ann=FALSE,
+     xlim=max_vs_hepG2_lims, ylim=max_vs_hepG2_lims)
+new_diag(par("usr"))
+points(max_vs_hepG2_df$max_dual_over_single,
+       max_vs_hepG2_df$hepG2_synergy,
+       pch=max_vs_hepG2_pch, cex=0.7, lwd=0.45,
+       col="black", bg=alpha(synergy_line_col[row.names(max_vs_hepG2_df)], 1))
+axis(1, at=max_vs_hepG2_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=-2, cex.axis=0.8)
+axis(2, at=max_vs_hepG2_at, lwd=1, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black", padj=1.8, cex.axis=0.8)
+title(xlab="Max FH - (F + H)", ylab="HepG2 FH - (F + H)", line=1.8, cex.lab=1)
+R_max_hepG2 <- cor(max_vs_hepG2_df$max_dual_over_single, max_vs_hepG2_df$hepG2_synergy, use="complete.obs")
+text(par("usr")[1] + 0.08*diff(par("usr")[1:2]),
+     par("usr")[4] - 0.08*diff(par("usr")[3:4]),
+     labels=paste0("R = ", signif(R_max_hepG2, 2)),
+     adj=c(0,1), cex=0.8)
+box()
+invisible(R_max_hepG2)
+```
+
+```{r, eval=T, fig.width=3.2, fig.height=3, echo=F, warning=F, results='show', dpi=300}
+missing_synergy_percent_seq <- setdiff(
+  final_smallError, row.names(k4fh_over_single_log2_diag)
+)
+if (length(missing_synergy_percent_seq) > 0) {
+  stop("Dose-dependent synergy is unavailable for one or more CREs in final_smallError")
+}
+synergy_percent_seq <- final_smallError
+synergy_by_conc <- k4fh_over_single_log2_diag[
+  synergy_percent_seq, , drop=FALSE
+]
+synergy_band_cols <- c(
+  positive=alpha(synergy_fill_col,0.9),
+  no_synergy="gray",
+  negative="#F4E1A1"
+)
+
+calculate_synergy_percent_by_conc <- function(synergy_matrix, cutoff) {
+  data.frame(
+    f_conc=f_conc_diag,
+    h_conc=h_conc_diag,
+    fh_conc=fh_conc_diag,
+    positive=100*colMeans(synergy_matrix > cutoff, na.rm=TRUE),
+    no_synergy=100*colMeans(
+      synergy_matrix >= -cutoff & synergy_matrix <= cutoff,
+      na.rm=TRUE
+    ),
+    negative=100*colMeans(synergy_matrix < -cutoff, na.rm=TRUE)
+  )
+}
+
+draw_synergy_percent_plot <- function(percent_df, cutoff) {
+  positive_line <- percent_df$positive/100
+  positive_no_line <- (percent_df$positive + percent_df$no_synergy)/100
+  all_cre_line <- rep(1, nrow(percent_df))
+  old_mar <- par("mar")
+  on.exit(par(mar=old_mar), add=TRUE)
+  par(mar=old_mar+c(0,0,0,4))
+
+  plot(percent_df$fh_conc, positive_line,
+       log="x", type="n", axes=FALSE, ann=FALSE,
+       xlim=c(fh_conc_plot_min,fh_conc_plot_max), ylim=c(0,1))
+  polygon(c(percent_df$fh_conc,rev(percent_df$fh_conc)),
+          c(rep(0,nrow(percent_df)),rev(positive_line)),
+          col=synergy_band_cols["positive"],border=NA)
+  polygon(c(percent_df$fh_conc,rev(percent_df$fh_conc)),
+          c(positive_line,rev(positive_no_line)),
+          col=synergy_band_cols["no_synergy"],border=NA)
+  polygon(c(percent_df$fh_conc,rev(percent_df$fh_conc)),
+          c(positive_no_line,rev(all_cre_line)),
+          col=synergy_band_cols["negative"],border=NA)
+  axis(1,at=fh_diag_axis_at,labels=fh_diag_f_labels,lwd=1,tck=-0.02,
+       col=rgb(0,0,0,0),col.ticks="black",padj=-2,cex.axis=0.8)
+  axis(3,at=fh_diag_axis_at,labels=fh_diag_h_labels,lwd=1,tck=-0.02,
+       col=rgb(0,0,0,0),col.ticks="black",padj=1.78,cex.axis=0.8)
+  axis(2,at=c(0,0.25,0.5,0.75,1),labels=c(0,25,50,75,100),
+       lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+       padj=1.4,cex.axis=0.8)
+  title(xlab="[FOXA1] (nM)",ylab="CREs (%)",line=1.5,cex.lab=1)
+  box()
+  lines(percent_df$fh_conc,positive_line,col=synergy_col,lwd=1.5)
+  lines(percent_df$fh_conc,positive_no_line,col="gray35",lwd=1.5)
+  lines(percent_df$fh_conc,all_cre_line,col="#C5A83E",lwd=1.5)
+  legend("topright",inset=c(-0.58,0),xpd=NA,
+         legend=c("Positive synergy","No synergy","Negative synergy"),
+         title=paste0("Cutoff = +/-",signif(cutoff,3)),
+         fill=synergy_band_cols,border=NA,bty="n",cex=0.65)
+}
+
+synergy_cutoff_1 <- 1
+synergy_percent_by_conc <- calculate_synergy_percent_by_conc(
+  synergy_by_conc, synergy_cutoff_1
+)
+draw_synergy_percent_plot(synergy_percent_by_conc, synergy_cutoff_1)
+
+missing_synergy_summary_seq <- setdiff(
+  final_smallError, row.names(k4fh_over_single_max_conc)
+)
+if (length(missing_synergy_summary_seq) > 0) {
+  stop("Synergy summaries are unavailable for one or more CREs in final_smallError")
+}
+synergy_category_percent <- function(values, cutoff) {
+  values <- values[is.finite(values)]
+  c(
+    positive_percent=100*mean(values > cutoff),
+    no_synergy_percent=100*mean(values >= -cutoff & values <= cutoff),
+    negative_percent=100*mean(values < -cutoff),
+    n=length(values)
+  )
+}
+synergy_summary_values <- k4fh_over_single_max_conc[final_smallError,,drop=FALSE]
+synergy_percent_summary <- rbind(
+  HepG2_synergy=synergy_category_percent(
+    synergy_summary_values$hepG2_synergy, synergy_cutoff_1
+  ),
+  max_synergy=synergy_category_percent(
+    synergy_summary_values$max_dual_over_single, synergy_cutoff_1
+  ),
+  regP_synergy=synergy_category_percent(
+    synergy_summary_values$synergy, synergy_cutoff_1
+  )
+)
+print(round(synergy_percent_summary,2))
+```
+
+```{r, eval=T, fig.width=3.2, fig.height=2, echo=F, warning=F, results='show', dpi=300}
+synergy_cutoff_log2_1d5 <- log2(1.5)
+synergy_percent_by_conc_log2_1d5 <- calculate_synergy_percent_by_conc(
+  synergy_by_conc, synergy_cutoff_log2_1d5
+)
+draw_synergy_percent_plot(
+  synergy_percent_by_conc_log2_1d5,
+  synergy_cutoff_log2_1d5
+)
+```
+
+### nonmonotonic synergy
+
+```{r ,  eval=T,fig.width=2.8, fig.height=3.3,  echo=F, warning=F, results='show'}
+max_synergy_ec50_df <- data.frame(
+  max_synergy_conc=(k4fh_over_single_max_conc[common_seq,]$fh_conc_at_max)^0.5,
+  max_synergy_conc_plot=(k4fh_over_single_max_conc[common_seq,]$fh_conc_at_max_plot)^0.5,
+  EC50=gHill_par_foxa1_k4fh[common_seq,]$EC50,#/((gHill_par_foxa1_k1f[common_seq,]$Kd*gHill_par_foxa1_k3h[common_seq,]$Kd)^0.5),
+    EC50_synergy=gHill_par_foxa1_k4fh[common_seq,]$EC50/((gHill_par_foxa1_k1f[common_seq,]$Kd*gHill_par_foxa1_k3h[common_seq,]$Kd)^0.5),
+  synergy=gHill_par_foxa1_k4fh[common_seq,]$synergy,
+  row.names=common_seq
+)
+max_synergy_ec50_df <- max_synergy_ec50_df[complete.cases(max_synergy_ec50_df) &
+                                             is.finite(max_synergy_ec50_df$max_synergy_conc_plot) &
+                                             is.finite(max_synergy_ec50_df$EC50) &
+                                             max_synergy_ec50_df$max_synergy_conc_plot > 0 &
+                                             max_synergy_ec50_df$EC50 > 0,]
+log_axis_ticks <- function(lims, base_ticks=c(1,2,5)) {
+  ticks <- as.vector(outer(base_ticks, 10^(floor(log10(lims[1])):ceiling(log10(lims[2])))))
+  ticks <- sort(unique(ticks[ticks >= lims[1] & ticks <= lims[2]]))
+  labels <- format(signif(ticks, 3), scientific=FALSE, trim=TRUE)
+  list(at=ticks, labels=labels)
+}
+
+finite_max_synergy_conc <- max_synergy_ec50_df$max_synergy_conc_plot[
+  max_synergy_ec50_df$max_synergy_conc_plot > (fh_conc_plot_min)^0.5 &
+    max_synergy_ec50_df$max_synergy_conc_plot < (fh_conc_plot_max)^0.5
+]
+y_axis_middle <- if (length(finite_max_synergy_conc) > 0) {
+  log_axis_ticks(range(finite_max_synergy_conc, na.rm=TRUE))$at
+} else {
+  numeric(0)
+}
+y_axis_plot_at <- sort(unique(c((fh_conc_plot_min)^0.5,
+                                y_axis_middle,
+                                (fh_conc_plot_max)^0.5)))
+y_axis_plot_at <- y_axis_plot_at[is.finite(y_axis_plot_at) & y_axis_plot_at > 0]
+y_axis_plot_label <- y_axis_plot_at
+y_axis_plot_label[y_axis_plot_at == (fh_conc_plot_min)^0.5] <- "0"
+y_axis_plot_label[y_axis_plot_at == (fh_conc_plot_max)^0.5] <- "Inf"
+x_lims <- range(max_synergy_ec50_df$EC50, finite=TRUE)
+y_lims <- range(y_axis_plot_at, finite=TRUE)
+x_axis_plot_ticks <- log_axis_ticks(x_lims)
+
+plot(max_synergy_ec50_df$EC50,
+     max_synergy_ec50_df$max_synergy_conc_plot,
+     log="xy", axes=FALSE, ann=FALSE, pch=21, cex=0.75,
+     xlim=x_lims, ylim=y_lims,
+     col="black",
+     bg=alpha(synergy_line_col[row.names(max_synergy_ec50_df)], 1))
+axis(1, at=x_axis_plot_ticks$at, labels=x_axis_plot_ticks$labels, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, at=y_axis_plot_at, labels=y_axis_plot_label, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.8, cex.axis=0.8)
+title(xlab="FH EC50 (FOXA1 x HNF4A)", ylab="Max FH - (F + H) conc", line=1.8, cex.lab=1)
+new_diag(10^(par('usr')))
+box()
+
+max_synergy_ec50_cor_df <- max_synergy_ec50_df[is.finite(max_synergy_ec50_df$max_synergy_conc) &
+                                                 max_synergy_ec50_df$max_synergy_conc > 0,]
+
+finite_ec50_lims <- range(c(max_synergy_ec50_cor_df$EC50,
+                            max_synergy_ec50_cor_df$max_synergy_conc), finite=TRUE)
+finite_ec50_ticks <- c(10,50,200)
+ec50_peak_lm <- lm(
+  log10(max_synergy_conc) ~ 1 + offset(log10(EC50)),
+  data=max_synergy_ec50_cor_df
+)
+ec50_peak_log_intercept <- unname(coef(ec50_peak_lm))[1]
+ec50_peak_scale <- 10^ec50_peak_log_intercept
+ec50_peak_line_x <- exp(seq(
+  log(min(max_synergy_ec50_cor_df$EC50)),
+  log(max(max_synergy_ec50_cor_df$EC50)),
+  length.out=300
+))
+ec50_peak_line_y <- ec50_peak_scale*ec50_peak_line_x
+plot(max_synergy_ec50_cor_df$EC50,
+     max_synergy_ec50_cor_df$max_synergy_conc,
+     log="xy", axes=FALSE, ann=FALSE, pch=21, cex=0.75,
+     xlim=finite_ec50_lims, ylim=finite_ec50_lims,
+     col="black",
+     bg=alpha(synergy_line_col[row.names(max_synergy_ec50_cor_df)], 1))
+axis(1, at=finite_ec50_ticks, labels=finite_ec50_ticks, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, at=finite_ec50_ticks, labels=finite_ec50_ticks, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.8, cex.axis=0.8)
+title(xlab="EC50_FH", ylab="Synergy peak-at conc", line=1.8, cex.lab=1)
+new_diag(10^(par('usr')))
+lines(ec50_peak_line_x,ec50_peak_line_y,col=synergy_col,lwd=1.5)
+R_ec50_peak <- cor(log10(max_synergy_ec50_cor_df$EC50),
+                   log10(max_synergy_ec50_cor_df$max_synergy_conc),
+                   use="complete.obs")
+ec50_peak_equation <- paste0(
+  "y = ",signif(ec50_peak_scale,3),"x",
+  "\nR = ",signif(R_ec50_peak,2)
+)
+text(10^(par("usr")[1] + 0.05*diff(par("usr")[1:2])),
+     10^(par("usr")[4] - 0.05*diff(par("usr")[3:4])),
+     labels=ec50_peak_equation,
+     adj=c(0,1), cex=0.72)
+box()
+invisible(R_ec50_peak)
+
+ec50_synergy_lims <- range(max_synergy_ec50_cor_df$EC50_synergy, finite=TRUE)
+ec50_synergy_ticks <- log_axis_ticks(ec50_synergy_lims)
+finite_peak_ticks <- log_axis_ticks(range(max_synergy_ec50_cor_df$max_synergy_conc, finite=TRUE))
+plot(max_synergy_ec50_cor_df$EC50_synergy,
+     max_synergy_ec50_cor_df$max_synergy_conc,
+     log="xy", axes=FALSE, ann=FALSE, pch=21, cex=0.75,
+     col="black",
+     bg=alpha(synergy_line_col[row.names(max_synergy_ec50_cor_df)], 1))
+axis(1, at=ec50_synergy_ticks$at, labels=ec50_synergy_ticks$labels, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, at=finite_peak_ticks$at, labels=finite_peak_ticks$labels, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.8, cex.axis=0.8)
+title(xlab="Synergy_defined_from_EC50", ylab="Synergy peak-at conc", line=1.8, cex.lab=1)
+R_ec50synergy_peak <- cor(log10(max_synergy_ec50_cor_df$EC50_synergy), log10(max_synergy_ec50_cor_df$max_synergy_conc), use="complete.obs")
+text(10^(par("usr")[1] + 0.08*diff(par("usr")[1:2])),
+     10^(par("usr")[4] - 0.08*diff(par("usr")[3:4])),
+     labels=paste0("R = ", signif(R_ec50synergy_peak, 2)),
+     adj=c(0,1), cex=0.8)
+box()
+invisible(R_ec50synergy_peak)
+
+max_synergy_ec50_cor_df$max_synergy <- k4fh_over_single_max_conc[row.names(max_synergy_ec50_cor_df),]$max_dual_over_single
+#max_synergy_ec50_cor_df$physiological_synergy <- 
+```
+
+```{r, eval=T, fig.width=2.8, fig.height=3.3, echo=F, warning=F, results='show', dpi=300}
+hist_peak_metrics <- k4fh_over_single_max_conc[row.names(max_synergy_ec50_cor_df),]
+hist_f_conc_titrated_range <- range(conc_foxa1)
+high_synergy_peak_keep <-
+  max_synergy_ec50_cor_df$max_synergy >
+    quantile(max_synergy_ec50_cor_df$max_synergy,0.667) &
+  is.finite(hist_peak_metrics$f_conc_at_max) &
+  hist_peak_metrics$f_conc_at_max >= hist_f_conc_titrated_range[1] &
+  hist_peak_metrics$f_conc_at_max <= hist_f_conc_titrated_range[2]
+high_synergy_peak_conc <-
+  max_synergy_ec50_cor_df$max_synergy_conc[high_synergy_peak_keep]
+hepG2_combined_conc <- sqrt(hepG2_foxa1_conc*hepG2_hnf4a_conc)
+high_synergy_peak_log10 <- log10(high_synergy_peak_conc)
+peak_hist <- hist(high_synergy_peak_log10, breaks=15, plot=FALSE)
+peak_hist_tick_labels <- c(20,50)
+peak_hist_log_ticks <- log10(peak_hist_tick_labels)
+plot(peak_hist, col=alpha(synergy_col,0.85), border=NA,
+     axes=FALSE, ann=FALSE)
+axis(1, at=peak_hist_log_ticks, labels=peak_hist_tick_labels,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, at=pretty(c(0,peak_hist$counts), n=4),
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(xlab="Synergy peak concentration", ylab="Count",
+      line=1.5, cex.lab=1)
+abline(v=log10(hepG2_combined_conc), col="black", lty=5, lwd=1.2)
+box()
+```
+
+```{r, eval=T, fig.width=2.8, fig.height=3.3, echo=F, warning=F, results='show'}
+peak_vs_max_df <- k4fh_over_single_max_conc[
+  is.finite(k4fh_over_single_max_conc$fh_conc_at_max) &
+    k4fh_over_single_max_conc$fh_conc_at_max > 0 &
+    is.finite(k4fh_over_single_max_conc$max_dual_over_single),
+]
+peak_vs_max_x <- sqrt(peak_vs_max_df$fh_conc_at_max)
+peak_vs_max_y <- peak_vs_max_df$max_dual_over_single
+plot(peak_vs_max_x, peak_vs_max_y, type="n", axes=FALSE, ann=FALSE)
+points(peak_vs_max_x, peak_vs_max_y,
+       pch=21, cex=0.7, lwd=0.45, col="black",
+       bg=alpha(synergy_line_col[row.names(peak_vs_max_df)],1))
+axis(1, at=pretty(range(peak_vs_max_x), n=4),
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, at=pretty(range(peak_vs_max_y), n=4),
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(xlab="Synergy peak concentration", ylab="Maximum synergy",
+      line=1.5, cex.lab=1)
+box()
+
+ec50_by_peak_location <- data.frame(
+  EC50=gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$EC50,
+  regP=gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$regP,
+  n=gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$n,
+  Abasal=gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$basal,
+  binding_sites=lib1_tfbsn[row.names(k4fh_over_single_max_conc),]$f*lib1_tfbsn[row.names(k4fh_over_single_max_conc),]$h,
+  regP_synergy=gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$synergy,
+  EC50_synergy=-log2(
+    gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$EC50/
+      sqrt(
+        gHill_par_foxa1_k1f[row.names(k4fh_over_single_max_conc),]$Kd*
+          gHill_par_foxa1_k3h[row.names(k4fh_over_single_max_conc),]$Kd
+      )
+  ),
+  n_synergy=
+    gHill_par_foxa1_k4fh[row.names(k4fh_over_single_max_conc),]$n-
+      pmax(
+        gHill_par_foxa1_k1f[row.names(k4fh_over_single_max_conc),]$n,
+        gHill_par_foxa1_k3h[row.names(k4fh_over_single_max_conc),]$n
+      ),
+  peak_group=ifelse(
+    k4fh_over_single_max_conc$max_location == "finite_peak",
+    "Peak in range",
+    "Peak at 0/Inf"
+  ),
+  row.names=row.names(k4fh_over_single_max_conc)
+)
+ec50_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$EC50) & ec50_by_peak_location$EC50 > 0,
+]
+ec50_by_peak_location$peak_group <- factor(
+  ec50_by_peak_location$peak_group,
+  levels=c("Peak at 0/Inf","Peak in range")
+)
+peak_group_cols <- c("#8D78A8", "#D8897E")
+peak_group_x_labels <- c("Monotonic","Non-monotonic")
+peak_group_x_label_line <- 1
+peak_group_zero_line <- function(lwd=1) {
+  abline(h=0,col="gray60",lty=2,lwd=lwd)
+}
+peak_group_zero_wilcox_p <- function(values, groups) {
+  vapply(levels(groups), function(group_name) {
+    group_values <- values[
+      is.finite(values) & !is.na(groups) & groups == group_name
+    ]
+    if (length(group_values) == 0) return(NA_real_)
+    suppressWarnings(
+      wilcox.test(
+        group_values, mu=0, alternative="two.sided", exact=FALSE
+      )$p.value
+    )
+  }, numeric(1))
+}
+add_peak_group_zero_p_labels <- function(
+  values, groups, at=seq_along(levels(groups))
+) {
+  p_values <- peak_group_zero_wilcox_p(values, groups)
+  p_labels <- ifelse(
+    is.na(p_values),
+    "p = NA",
+    paste0("p = ", format.pval(p_values, digits=2, eps=1e-4))
+  )
+  mtext(
+    p_labels, side=3, line=0.25, at=at, cex=0.65
+  )
+}
+ec50_peak_ticks <- log_axis_ticks(range(ec50_by_peak_location$EC50))
+boxplot(EC50 ~ peak_group, data=ec50_by_peak_location,
+        log="y", axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black")
+peak_group_zero_line()
+stripchart(EC50 ~ peak_group, data=ec50_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.16,
+           pch=21, cex=0.45, col=alpha("black",0.35),
+           bg=alpha("white",0.45), add=TRUE)
+axis(1, at=1:2, labels=FALSE,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     cex.axis=0.8)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=1:2,cex=0.8)
+axis(2, at=ec50_peak_ticks$at, labels=ec50_peak_ticks$labels,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="FH EC50", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  ec50_by_peak_location$EC50, ec50_by_peak_location$peak_group
+)
+box()
+
+regP_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$regP),
+]
+regP_peak_ticks <- pretty(range(regP_by_peak_location$regP), n=4)
+boxplot(regP ~ peak_group, data=regP_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black")
+peak_group_zero_line()
+stripchart(regP ~ peak_group, data=regP_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.16,
+           pch=21, cex=0.45, col=alpha("black",0.35),
+           bg=alpha("white",0.45), add=TRUE)
+axis(1, at=1:2, labels=FALSE,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     cex.axis=0.8)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=1:2,cex=0.8)
+axis(2, at=regP_peak_ticks,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="FH RegP", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  regP_by_peak_location$regP, regP_by_peak_location$peak_group
+)
+box()
+
+n_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$n),
+]
+n_peak_ticks <- pretty(range(n_by_peak_location$n), n=4)
+boxplot(n ~ peak_group, data=n_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black")
+peak_group_zero_line()
+stripchart(n ~ peak_group, data=n_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.16,
+           pch=21, cex=0.45, col=alpha("black",0.35),
+           bg=alpha("white",0.45), add=TRUE)
+axis(1, at=1:2, labels=FALSE,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     cex.axis=0.8)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=1:2,cex=0.8)
+axis(2, at=n_peak_ticks,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="FH n", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  n_by_peak_location$n, n_by_peak_location$peak_group
+)
+box()
+
+Abasal_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$Abasal),
+]
+Abasal_peak_ticks <- pretty(range(Abasal_by_peak_location$Abasal), n=4)
+boxplot(Abasal ~ peak_group, data=Abasal_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black")
+peak_group_zero_line()
+stripchart(Abasal ~ peak_group, data=Abasal_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.16,
+           pch=21, cex=0.45, col=alpha("black",0.35),
+           bg=alpha("white",0.45), add=TRUE)
+axis(1, at=1:2, labels=FALSE,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     cex.axis=0.8)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=1:2,cex=0.8)
+axis(2, at=Abasal_peak_ticks,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="FH Abasal", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  Abasal_by_peak_location$Abasal,
+  Abasal_by_peak_location$peak_group
+)
+box()
+
+BS_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$binding_sites),
+]
+BS_peak_ticks <- seq(
+  floor(min(BS_by_peak_location$binding_sites)),
+  ceiling(max(BS_by_peak_location$binding_sites)),
+  by=1
+)
+boxplot(binding_sites ~ peak_group, data=BS_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black")
+peak_group_zero_line()
+stripchart(binding_sites ~ peak_group, data=BS_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.16,
+           pch=21, cex=0.45, col=alpha("black",0.35),
+           bg=alpha("white",0.45), add=TRUE)
+axis(1, at=1:2, labels=FALSE,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     cex.axis=0.8)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=1:2,cex=0.8)
+axis(2, at=BS_peak_ticks,
+     lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="Number of binding sites", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  BS_by_peak_location$binding_sites,
+  BS_by_peak_location$peak_group
+)
+box()
+```
+
+```{r, eval=T, fig.width=3.3, fig.height=2.75, echo=F, warning=F, results='show'}
+
+
+synergy_peak_group_at <- c(0.6,2.4)
+regP_synergy_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$regP_synergy),
+]
+regP_synergy_peak_ticks <- pretty(
+  range(regP_synergy_by_peak_location$regP_synergy), n=4
+)
+boxplot(regP_synergy ~ peak_group, data=regP_synergy_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black", lwd=0.7, boxwex=0.5,
+        at=synergy_peak_group_at)
+peak_group_zero_line(lwd=0.7)
+stripchart(regP_synergy ~ peak_group, data=regP_synergy_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.125,
+           pch=21, cex=0.35, lwd=0.5, col=alpha("black",0.5),
+           bg=alpha("white",0.3), at=synergy_peak_group_at, add=TRUE)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=synergy_peak_group_at,cex=0.8)
+axis(2, at=regP_synergy_peak_ticks,
+     lwd=0.7, lwd.ticks=0.7, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="RegP synergy", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  regP_synergy_by_peak_location$regP_synergy,
+  regP_synergy_by_peak_location$peak_group,
+  at=synergy_peak_group_at
+)
+box(lwd=0.7)
+
+EC50_synergy_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$EC50_synergy),
+]
+EC50_synergy_peak_ticks <- pretty(
+  range(EC50_synergy_by_peak_location$EC50_synergy), n=2
+)
+boxplot(EC50_synergy ~ peak_group, data=EC50_synergy_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black", lwd=0.7, boxwex=0.5,
+        at=synergy_peak_group_at)
+peak_group_zero_line(lwd=0.7)
+stripchart(EC50_synergy ~ peak_group, data=EC50_synergy_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.125,
+           pch=21, cex=0.35, lwd=0.5, col=alpha("black",0.5),
+           bg=alpha("white",0.3), at=synergy_peak_group_at, add=TRUE)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=synergy_peak_group_at,cex=0.8)
+axis(2, at=EC50_synergy_peak_ticks,
+     lwd=0.7, lwd.ticks=0.7, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="EC50-defined synergy", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  EC50_synergy_by_peak_location$EC50_synergy,
+  EC50_synergy_by_peak_location$peak_group,
+  at=synergy_peak_group_at
+)
+box(lwd=0.7)
+
+n_synergy_by_peak_location <- ec50_by_peak_location[
+  is.finite(ec50_by_peak_location$n_synergy),
+]
+n_synergy_peak_ticks <- pretty(
+  range(n_synergy_by_peak_location$n_synergy), n=4
+)
+boxplot(n_synergy ~ peak_group, data=n_synergy_by_peak_location,
+        axes=FALSE, ann=FALSE, outline=TRUE, outcex=0,
+        col=peak_group_cols, border="black", lwd=0.7, boxwex=0.5,
+        at=synergy_peak_group_at)
+peak_group_zero_line(lwd=0.7)
+stripchart(n_synergy ~ peak_group, data=n_synergy_by_peak_location,
+           vertical=TRUE, method="jitter", jitter=0.125,
+           pch=21, cex=0.35, lwd=0.5, col=alpha("black",0.5),
+           bg=alpha("white",0.3), at=synergy_peak_group_at, add=TRUE)
+mtext(peak_group_x_labels,side=1,line=peak_group_x_label_line,
+      at=synergy_peak_group_at,cex=0.8)
+axis(2, at=n_synergy_peak_ticks,
+     lwd=0.7, lwd.ticks=0.7, tck=-0.02,
+     col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.5, cex.axis=0.8)
+title(ylab="n synergy", xlab="", line=1.5, cex.lab=1)
+add_peak_group_zero_p_labels(
+  n_synergy_by_peak_location$n_synergy,
+  n_synergy_by_peak_location$peak_group,
+  at=synergy_peak_group_at
+)
+box(lwd=0.7)
+```
+### dummy curves
+
+```{r, eval=T, fig.width=2.9, fig.height=3.5, echo=F, dpi=600, warning=F, results='show'}
+par(bg="white")
+
+dummy_conc <- exp(seq(log(0.2),log(160),length.out=300))
+dummy_hill <- function(conc, basal, maximum, EC50, n) {
+  basal + (maximum-basal)/(1+(EC50/conc)^n)
+}
+
+# non-monotonic
+# Illustrative parameters chosen to resemble the observed activity ranges.
+dummy_F_basal <- 1*0.95
+dummy_F_EC50 <- 50
+dummy_H_EC50 <- 30
+dummy_FH_EC50 <- 12
+dummy_F <- dummy_hill(dummy_conc, basal=dummy_F_basal, maximum=6, EC50=dummy_F_EC50, n=1.75)
+dummy_H <- dummy_hill(dummy_conc, basal=1., maximum=7, EC50=dummy_H_EC50, n=1.45)
+dummy_FH <- dummy_hill(dummy_conc, basal=1/0.95, maximum=155, EC50=dummy_FH_EC50, n=2.8) #2.8
+dummy_additive <- dummy_F * dummy_H / 0.95
+add_dummy_legend <- function() {
+  legend("topleft",legend=c("FH","F + H"),
+         col=c("#9075ab","#4192D9"),
+         lty=1,lwd=2,bty="n",cex=0.75)
+  legend("topleft",legend=c("",""),
+         col=c(NA,"#E86F77"),
+         lty=c(0,2),lwd=2,bty="n",cex=0.75)
+}
+
+plot(dummy_conc,dummy_FH,
+     log="xy",type="n",axes=FALSE,ann=FALSE,
+     xlim=c(0.19,160),ylim=c(0.8,250))
+
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(rep(dummy_F_basal,length(dummy_conc)),rev(dummy_F)),
+        col="#F8D8D9",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_F,rev(dummy_additive)),
+        col="#BAD7F2",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_additive,rev(dummy_FH)),
+        col=synergy_fill_col,border=NA)
+
+#abline(v=dummy_FH_EC50,col=alpha("#9075ab",0.8),lwd=1.2)
+#abline(v=dummy_H_EC50,col=alpha("#4192D9",0.8),lwd=1.2)
+#abline(v=dummy_F_EC50,col=alpha("#E86F77",0.8),lwd=1.2,lty=2)
+
+#axis(2,at=c(1,5,25,125),
+#     lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+#     padj=1.8,cex.axis=0.8)
+#axis(1,at=c(0.2,1,5,25,125),    lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black", padj=-2,cex.axis=0.8) ## x ticks
+title(ylab="Activity [a.u.]",xlab="[TF] (nM)",line=0.6,cex.lab=1)
+box()
+
+lines(dummy_conc,dummy_additive,col="white",lwd=3)
+lines(dummy_conc,dummy_additive,col="#4192D9",lwd=2)
+lines(dummy_conc,dummy_additive,col="#E86F77",lwd=2,lty=2)
+lines(dummy_conc,dummy_FH,col="white",lwd=3)
+lines(dummy_conc,dummy_FH,col="#9075ab",lwd=2)
+
+add_dummy_legend()
+
+dummy_conc <- exp(seq(log(0.2),log(160),length.out=300))
+dummy_hill <- function(conc, basal, maximum, EC50, n) {
+  basal + (maximum-basal)/(1+(EC50/conc)^n)
+}
+
+# monotonic
+dummy_F_basal <- 1*0.95
+dummy_F_EC50 <- 50
+dummy_H_EC50 <- 30
+dummy_FH_EC50 <- 50
+dummy_F <- dummy_hill(dummy_conc, basal=dummy_F_basal, maximum=6, EC50=dummy_F_EC50, n=1.75)
+dummy_H <- dummy_hill(dummy_conc, basal=1., maximum=7, EC50=dummy_H_EC50, n=1.45)
+dummy_FH <- dummy_hill(dummy_conc, basal=1/0.95, maximum=195, EC50=dummy_FH_EC50, n=2.) # 2
+dummy_additive <- dummy_F * dummy_H / 0.95
+
+plot(dummy_conc,dummy_FH,
+     log="xy",type="n",axes=FALSE,ann=FALSE,
+     xlim=c(0.19,160),ylim=c(0.8,250))
+
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(rep(dummy_F_basal,length(dummy_conc)),rev(dummy_F)),
+        col="#F8D8D9",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_F,rev(dummy_additive)),
+        col="#BAD7F2",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_additive,rev(dummy_FH)),
+        col=synergy_fill_col,border=NA)
+
+#abline(v=dummy_FH_EC50,col=alpha("#9075ab",0.8),lwd=1.2)
+#abline(v=dummy_H_EC50,col=alpha("#4192D9",0.8),lwd=1.2)
+#abline(v=dummy_F_EC50,col=alpha("#E86F77",0.8),lwd=1.2,lty=2)
+
+#axis(2,at=c(1,5,25,125),
+#     lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+#     padj=1.8,cex.axis=0.8)
+#axis(1,at=c(0.2,1,5,25,125),    lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black", padj=-2,cex.axis=0.8) ## x ticks
+title(ylab="Activity [a.u.]",xlab="[TF] (nM)",line=0.6,cex.lab=1)
+box()
+
+lines(dummy_conc,dummy_additive,col="white",lwd=3)
+lines(dummy_conc,dummy_additive,col="#4192D9",lwd=2)
+lines(dummy_conc,dummy_additive,col="#E86F77",lwd=2,lty=2)
+lines(dummy_conc,dummy_FH,col="white",lwd=3)
+lines(dummy_conc,dummy_FH,col="#9075ab",lwd=2)
+
+add_dummy_legend()
+
+
+
+# monotonic
+dummy_F_basal <- 1*0.95
+dummy_F_EC50 <- 20
+dummy_H_EC50 <- 20
+dummy_FH_EC50 <- 20
+dummy_F <- dummy_hill(dummy_conc, basal=dummy_F_basal, maximum=6, EC50=dummy_F_EC50, n=1.25)
+dummy_H <- dummy_hill(dummy_conc, basal=1., maximum=7, EC50=dummy_H_EC50, n=1.25)
+dummy_FH <- dummy_hill(dummy_conc, basal=1/0.95, maximum=195, EC50=dummy_FH_EC50, n=3) # 2
+dummy_additive <- dummy_F * dummy_H / 0.95
+
+plot(dummy_conc,dummy_FH,
+     log="xy",type="n",axes=FALSE,ann=FALSE,
+     xlim=c(0.19,160),ylim=c(0.8,250))
+
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(rep(dummy_F_basal,length(dummy_conc)),rev(dummy_F)),
+        col="#F8D8D9",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_F,rev(dummy_additive)),
+        col="#BAD7F2",border=NA)
+polygon(c(dummy_conc,rev(dummy_conc)),
+        c(dummy_additive,rev(dummy_FH)),
+        col=synergy_fill_col,border=NA)
+
+#abline(v=dummy_FH_EC50,col=alpha("#9075ab",0.8),lwd=1.2)
+#abline(v=dummy_H_EC50,col=alpha("#4192D9",0.8),lwd=1.2)
+#abline(v=dummy_F_EC50,col=alpha("#E86F77",0.8),lwd=1.2,lty=2)
+
+#axis(2,at=c(1,5,25,125),
+#     lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black",
+#     padj=1.8,cex.axis=0.8)
+#axis(1,at=c(0.2,1,5,25,125),    lwd=1,tck=-0.02,col=rgb(0,0,0,0),col.ticks="black", padj=-2,cex.axis=0.8) ## x ticks
+title(ylab="Activity [a.u.]",xlab="[TF] (nM)",line=0.6,cex.lab=1)
+box()
+
+lines(dummy_conc,dummy_additive,col="white",lwd=3)
+lines(dummy_conc,dummy_additive,col="#4192D9",lwd=2)
+lines(dummy_conc,dummy_additive,col="#E86F77",lwd=2,lty=2)
+lines(dummy_conc,dummy_FH,col="white",lwd=3)
+lines(dummy_conc,dummy_FH,col="#9075ab",lwd=2)
+
+add_dummy_legend()
+
+
+
+```
+
+
+
+### dist violin
+
+```{r ,  eval=T,fig.width=1, fig.height=2,  echo=F, dpi=300, warning=F, results='show'}
+
+
+f_col <- "#E86F77"
+h_col <- "#4192D9"
+fh_col <- "#9075ab"
+
+
+### violin plot
+my_violin <- function(x,groupname,colors,ylab,ylim=c(5,160),breaks=c(10,100)){
+  n <- length(final_smallError)
+df <- data.frame(
+  group = rep(groupname, each=n),
+  value = c(x)
+)
+df$group <- factor(df$group, levels = groupname)
+names(colors) <- groupname
+result <- ggplot(df, aes(x=group, y=value, fill=group)) +
+  geom_violin() +
+    geom_boxplot(trim=FALSE,width = 0.1,fill="white") +
+  scale_fill_manual(values=colors)+
+  theme(legend.position = "none",
+  axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.text.y.right  = element_text(angle = 270, vjust = 0.5, hjust = 0.5),
+  axis.ticks.length = unit(2, "pt") ,
+  axis.title.x = element_blank(),
+  plot.title = element_text(size = 5), axis.ticks.y.right = element_line(),
+  #axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank() 
+  )+labs(
+    x = NULL,
+    y = NULL,title = ylab,
+  )+coord_cartesian(ylim = ylim)
+ # axis.ticks = element_blank
+return(result)
+  }
+
+f_range <- c(7,160)
+my_violin(c(gHill_par_foxa1_k1f[final_smallError,]$Kd),groupname = c("F"),colors=c(f_col),"FOXA1",f_range,c(10,30,100))+scale_y_log10(breaks=c(10,30,100))
+my_violin(c(gHill_par_foxa1_k3h[final_smallError,]$Kd),groupname = c("H"),colors=c(h_col),"HNF4A",f_range*0.467,c(5,15,50))+scale_y_log10(breaks=c(5,15,50))
+```
+
+```{r ,  eval=T,fig.width=1.18, fig.height=2,  echo=F, dpi=300, warning=F, results='show'}
+
+my_violin(c(EC_F[final_smallError,]),groupname = c("FH"),colors=c(fh_col),"FOXA1    HNF4A",f_range,c(10,30,100))+scale_y_log10(breaks=c(10,30,100),sec.axis = sec_axis(
+      ~ ., 
+      breaks = c(5,15,50)/0.467,
+      labels = c(5,15,50),guide = guide_axis(n.dodge = 1)
+    ))
+
+#my_violin(c(gHill_par_foxa1_k1f[final_smallError,]$Kd,EC_F[final_smallError,]),groupname = c("F","FH"),colors=c(f_col,fh_col),"EC50-FOXA1")
+
+#my_violin(c(gHill_par_foxa1_k3h[final_smallError,]$Kd,EC_H[final_smallError,]),groupname = c("H","FH"),colors=c(h_col,fh_col),"EC50-HNF4A")
+
+```
+
+```{r ,  eval=T,fig.width=1.9, fig.height=2,  echo=F, dpi=300, warning=F, results='show'}
+
+my_violin(c(gHill_par_foxa1_k1f[final_smallError,]$n,gHill_par_foxa1_k3h[final_smallError,]$n,gHill_par_foxa1_k4fh[final_smallError,]$n),groupname = c("F","H","FH"),colors=c(f_col,h_col,fh_col),"",ylim=c(0.5,10),breaks=c(2,5,8))+scale_y_continuous(breaks=c(1,2,5,8))
+t.test(gHill_par_foxa1_k3h[final_smallError,]$n,gHill_par_foxa1_k4fh[final_smallError,]$n)
+
+my_violin(c(gHill_par_foxa1_k1f[final_smallError,]$regP,gHill_par_foxa1_k3h[final_smallError,]$regP,gHill_par_foxa1_k4fh[final_smallError,]$regP),groupname = c("F","H","FH"),colors=c(f_col,h_col,fh_col),"",ylim=c(-0.5,6/log(2)),breaks=c(00,3,6))+scale_y_continuous(breaks=c(0,2.5,5,7.5))
+```
+
+
+```{r ,  eval=T,fig.width=3.5, fig.height=3.5,  echo=F, dpi=300, warning=F, results='show'}
+library(GGally)
+library(ggpubr)
+
+abasal_3lines <- data.frame(F=gHill_par_foxa1_k1f[final_smallError,]$basal,H=gHill_par_foxa1_k3h[final_smallError,]$basal,FH=gHill_par_foxa1_k4fh[final_smallError,]$basal)
+
+pairs(abasal_3lines)
+
+
+my_scatter_cor <- function(data, mapping, ...) {
+  ggplot(data = data, mapping = mapping) +scale_y_continuous(breaks=c(0,5,10))+scale_x_continuous(breaks=c(0,5,10))+
+    geom_point(alpha = 0.6, size = 1.5) +
+    geom_segment(
+      x = 0, y = 0, xend = 13, yend = 13,
+      inherit.aes = FALSE,
+      linetype = "dashed", linewidth = 0.3
+    )+
+  stat_cor(
+    method = "pearson",
+    aes(label = after_stat(rr.label)),
+    r.accuracy = 0.01,
+    p.accuracy = NULL
+  )+  coord_cartesian(
+    xlim = c(0,13), ylim = c(0,13),
+    expand = FALSE, clip = "on"
+  ) 
+   # ggally_cor(data = data,mapping = mapping, size = 3)   # requires ggpubr
+}
+
+ggpairs(
+  abasal_3lines,
+  lower = list(continuous = my_scatter_cor),
+  upper = list(continuous = "blank"),
+  diag  = list(continuous = "blank"))
+
+
+
+```
+
+### why synergy from regP
+
+```{r ,  eval=T,fig.width=3, fig.height=3.5,  echo=F,  warning=F, results='show'}
+
+test <- data.frame(fc=gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd/gHill_par_foxa1_k4fh[final_smallError,]$Kd,row.names = final_smallError)
+plot(-log2(gHill_par_foxa1_k4fh[final_smallError,]$Kd^0.5/(gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd)^0.5),gHill_par_foxa1_k4fh[final_smallError,]$synergy,log="",xlab="synergy defined from EC50", ylab="synergy defined from regP")
+#draw_diag()
+cor(-log2(gHill_par_foxa1_k4fh[final_smallError,]$Kd^0.5/(gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd)^0.5),gHill_par_foxa1_k4fh[final_smallError,]$synergy)
+plot(gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd,gHill_par_foxa1_k4fh[final_smallError,]$Kd,log="xy")
+draw_diag()
+
+plot(gHill_par_foxa1_k3h[final_smallError,]$n+gHill_par_foxa1_k1f[final_smallError,]$n,gHill_par_foxa1_k4fh[final_smallError,]$n,log="")
+draw_diag()
+
+plot((gHill_par_foxa1_k4fh[final_smallError,]$n)-(gHill_par_foxa1_k3h[final_smallError,]$n+gHill_par_foxa1_k1f[final_smallError,]$n),(gHill_par_foxa1_k4fh[final_smallError,]$synergy),log="",xlab="synergy defined from n", ylab="synergy defined from regP")
+
+cor(gHill_par_foxa1_k3h[final_smallError,]$n+gHill_par_foxa1_k1f[final_smallError,]$n-gHill_par_foxa1_k4fh[final_smallError,]$n,gHill_par_foxa1_k4fh[final_smallError,]$synergy)
+
+plot((gHill_par_foxa1_k4fh[final_smallError,]$n)-(gHill_par_foxa1_k3h[final_smallError,]$n+gHill_par_foxa1_k1f[final_smallError,]$n),-log2(gHill_par_foxa1_k4fh[final_smallError,]$Kd^0.5/(gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd)^0.5),log="",xlab="synergy defined from n", ylab="synergy defined from EC50")
+cor((gHill_par_foxa1_k4fh[final_smallError,]$n)-(gHill_par_foxa1_k3h[final_smallError,]$n+gHill_par_foxa1_k1f[final_smallError,]$n),-log2(gHill_par_foxa1_k4fh[final_smallError,]$Kd^0.5/(gHill_par_foxa1_k3h[final_smallError,]$Kd*gHill_par_foxa1_k1f[final_smallError,]$Kd)^0.5))
+
+
+```
+
+### fit performance
+```{r ,  eval=T,fig.width=4.5, fig.height=3,  echo=F,  warning=F, results='show'}
+
+#  EC_F <- data.frame(ec=(gHill_par_foxa1_k4fh$Kd/0.467)^0.5,row.names = row.names(gHill_par_foxa1_k4fh))
+#  EC_H <- data.frame(ec=(gHill_par_foxa1_k4fh$Kd*0.467)^0.5,row.names = row.names(gHill_par_foxa1_k4fh))
+
+  ECstd_F <- data.frame(ec=(fit_std_foxa1_k4fh$Kd/0.467)^0.5,row.names = row.names(fit_std_foxa1_k4fh))
+  ECstd_H <- data.frame(ec=(fit_std_foxa1_k4fh$Kd*0.467)^0.5,row.names = row.names(fit_std_foxa1_k4fh))
+
+hist_performance <- function(fit_std_foxa1_k1f,cutoff=10,breaks=100,color,atx,labelx=atx,aty,xlab,xlim=c(0,100),lower_cutoff=-Inf){
+ # smallError_list <- bc_full_list[which(gHill_std_foxa1_k1f[bc_full_list,column]<cutoff*gHill_par_foxa1_k1f[bc_full_list,column] & gHill_par_foxa1_k1f[bc_full_list,column]!=outlier)]
+  x <- fit_std_foxa1_k1f
+  x[which(fit_std_foxa1_k1f>cutoff)] <- cutoff
+  x <- x[is.finite(x) & x >= lower_cutoff]
+
+  hist(x,breaks=breaks,col=color,border = color,axes=FALSE,ann=FALSE,xlim = xlim,horiz = FALSE)
+box()
+text(
+  x = par("usr")[2],   # right edge
+  y = par("usr")[4],   # top edge
+  labels = xlab,
+  adj = c(1, 1)             # left-justified (so it sits inside)
+)
+  axis(2, at = aty,   lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+ # axis(1, at = atx, labels=labelx,lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+  #  title(ylab="Count",xlab=xlab, line=1.5, cex.lab=1.)
+  #print((quantile(x,.75)-quantile(x,.25))/(quantile(x,.75)+quantile(x,.25)))
+  #  print((quantile(x,.75)/quantile(x,.25)))
+  #  print(sd(x))
+
+}
+
+hist_performance(c(gHill_par_foxa1_k4fh$r2,gHill_par_foxa1_k1f$r2,gHill_par_foxa1_k3h$r2),cutoff=100,breaks = 10,color="lightgray",atx=c(0,0.5,1),labelx=c(0,0.5,1),aty=c(0,3000),xlab="R2",xlim=c(0,1))
+hist_performance(c(gHill_par_foxa1_k4fh[smallError_list3,]$r2,gHill_par_foxa1_k1f[smallError_list,]$r2,gHill_par_foxa1_k3h[smallError_list2,]$r2),cutoff=100,breaks = seq(0.5,1,length.out=40),color="lightgray",atx=c(0,50,100),labelx=c(0,0.5,1),aty=c(0,1500),xlab="R2",xlim=c(0.5,1),lower_cutoff=0.5)
+  axis(1, at = c(0,0.5,0.9,1), labels=c(0,0.5,0.9,1),lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+  title(ylab="Count",line=1.5, cex.lab=1.)
+#my_violin(c(gHill_par_foxa1_k4fh[final_smallError,]$r2,gHill_par_foxa1_k1f[final_smallError,]$r2,gHill_par_foxa1_k3h[final_smallError,]$r2),groupname = c("FH","F","H"),colors=c("lightgray","lightgray","lightgray"),"R2",c(0.5,1),c(0.5,1))+scale_y_log10(breaks=c(0.5,0.9,1))
+```
+
+```{r ,  eval=T,fig.width=3, fig.height=3,  echo=F, dpi=300, warning=F, results='show'}
+rse_tag <- final_smallError
+par(
+  mfrow = c(4,1),
+  mar = c(0,2,0,0),   # remove margins inside panels
+  oma = c(3,0,0,0)    # remove outer margins
+)
+
+
+
+hist_performance(100*c(fit_std_foxa1_k4fh[smallError_list3,]$basal/abs(gHill_par_foxa1_k4fh[smallError_list3,]$basal),fit_std_foxa1_k1f[smallError_list,]$basal/abs(gHill_par_foxa1_k1f[smallError_list,]$basal),fit_std_foxa1_k3h[smallError_list2,]$basal/abs(gHill_par_foxa1_k3h[smallError_list2,]$basal)),cutoff=100,breaks = 20,color="#AFC4BE",atx=c(0,50,100),labelx=c(0,50,100),aty=c(0,1000),xlab="Abasal RSE")
+hist_performance(100*c(fit_std_foxa1_k4fh[smallError_list3,]$regP/abs(gHill_par_foxa1_k4fh[smallError_list3,]$regP),fit_std_foxa1_k1f[smallError_list,]$regP/abs(gHill_par_foxa1_k1f[smallError_list,]$regP),fit_std_foxa1_k3h[smallError_list2,]$regP/abs(gHill_par_foxa1_k3h[smallError_list2,]$regP)),cutoff=100,breaks = 20,color=FC_col,atx=c(0,50,100),labelx=c(0,50,100),aty=c(0,500),xlab="RegP RSE")
+hist_performance(100*c(ECstd_F[smallError_list3,]/EC_F[smallError_list3,],fit_std_foxa1_k1f[smallError_list,]$Kd/gHill_par_foxa1_k1f[smallError_list,]$Kd,fit_std_foxa1_k3h[smallError_list2,]$Kd/gHill_par_foxa1_k3h[smallError_list2,]$Kd),cutoff=100,breaks = 20,color=EC50_col,atx=c(0,50,100),labelx=c(0,50,100),aty=c(0,200),xlab="EC50 RSE")
+hist_performance(c(fit_std_foxa1_k4fh[smallError_list3,]$n/gHill_par_foxa1_k4fh[smallError_list3,]$n,fit_std_foxa1_k1f[smallError_list,]$n/gHill_par_foxa1_k1f[smallError_list,]$n,fit_std_foxa1_k3h[smallError_list2,]$n/gHill_par_foxa1_k3h[smallError_list2,]$n)*100,cutoff=100,breaks = 20,color=n_col,atx=c(0,50,100),labelx=c(0,50,100),aty=c(0,300),xlab="Hill coefficient RSE")
+
+  axis(1, at = c(0,50,100), labels=c(0,50,100),lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+ title(xlab="RSE (%)", line=1.5, cex.lab=1.)
+#hist_performance(c(ECstd_H$ec,fit_std_foxa1_k3h$Kd),cutoff=300,breaks = 100,color=EC50_col,atx=c(0,150,300),labelx=c(0,150,300),aty=c(0,2000),xlab="EC50 SE")
+
+
+# hist(gHill_par_foxa1_k4fh$r2,breaks=10,main="",col="lightgray",border = "lightgray",axes=FALSE,xlab="",ylab="")
+# box()
+#   axis(2, at = c(0,500,1000,1500),   lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+#   axis(1, at = (c(0,0.5,1)), lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+#     title(ylab="Counts",xlab="Fitted-observed R2", line=1.5, cex.lab=1)
+
+print(length(which(c(gHill_par_foxa1_k4fh$r2,gHill_par_foxa1_k1f$r2,gHill_par_foxa1_k3h$r2)>.9))/length(bc_full_list)/3)
+
+```
+
+
+### bio reps
+```{r ,  eval=T,fig.width=3.5, fig.height=4,  echo=F,  warning=F, results='show'}
+gHill_par_foxa1_k4fh_r1 <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_par_r1.txt" ,row.names = 1,sep = "\t",header = T)
+gHill_par_foxa1_k4fh_r2 <- read.table("~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/gHill_lib1_k4fh_trained_par_r2.txt" ,row.names = 1,sep = "\t",header = T)
+
+plot(gHill_par_foxa1_k4fh_r1[final_smallError,]$Kd,gHill_par_foxa1_k4fh_r2[final_smallError,]$Kd,log="xy")
+draw_diag()
+plot(gHill_par_foxa1_k4fh_r1[final_smallError,]$n,gHill_par_foxa1_k4fh_r2[final_smallError,]$n,log="")
+draw_diag()
+plot(log2(gHill_par_foxa1_k4fh_r1[final_smallError,]$Fmax/gHill_par_foxa1_k4fh_r1[final_smallError,]$basal),log2(gHill_par_foxa1_k4fh_r2[final_smallError,]$Fmax/gHill_par_foxa1_k4fh_r2[final_smallError,]$basal),log="")
+draw_diag()
+cor(log2(gHill_par_foxa1_k4fh_r1[final_smallError,]$Fmax/gHill_par_foxa1_k4fh_r1[final_smallError,]$basal),log2(gHill_par_foxa1_k4fh_r2[final_smallError,]$Fmax/gHill_par_foxa1_k4fh_r2[final_smallError,]$basal))^2
+
+```
+```{r ,  eval=F,fig.width=4.5, fig.height=3,  echo=F,  warning=F, results='show'}
+
+
+hist_performance(c(gHill_std_foxa1_k4fh$n,gHill_std_foxa1_k1f$n,gHill_std_foxa1_k3h$n),cutoff=10,breaks = 10,color=n_col,atx=c(0,5,10),labelx=c(0,5,10),aty=c(0,2000),xlab="Hill coefficient bio rep SE")
+
+hist_performance(c(ECstd_F$ec,gHill_std_foxa1_k1f$Kd,ECstd_H$ec,gHill_std_foxa1_k3h$Kd),cutoff=200,breaks = 100,color=EC50_col,atx=c(0,100,200),labelx=c(0,100,200),aty=c(0,2000),xlab="EC50-FOXA1 bio rep SE")
+
+hist_performance(c(gHill_std_foxa1_k4fh$regP,gHill_std_foxa1_k1f$regP,gHill_std_foxa1_k3h$regP),cutoff=2,breaks = 10,color=FC_col,atx=c(0,1,2),labelx=c(0,1,2),aty=c(0,2000),xlab="RegP bio rep SE")
+
+```
+
+### synergy
+
+```{r ,  eval=T,fig.width=3, fig.height=2,  echo=F, dpi=300, warning=F, results='show'}
+
+lib1_dose_synergy <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+lib1_dose_synergy_std <- read.table(
+  "~/Dropbox/postdoc/tft_metadata/hill_fit/hessian_se/lib1_dose_synergy_std.txt",
+  row.names = 1, sep = "\t", header = TRUE, check.names = FALSE
+)
+
+missing_hepG2_synergy <- setdiff(bc_full_list, row.names(lib1_dose_synergy))
+missing_hepG2_synergy_std <- setdiff(bc_full_list, row.names(lib1_dose_synergy_std))
+if (length(missing_hepG2_synergy) > 0 || length(missing_hepG2_synergy_std) > 0) {
+  stop("HepG2 synergy or its SD is missing for one or more library sequences")
+}
+
+# From this point onward, all existing `synergy` analyses use the
+# concentration-specific HepG2 synergy and its biological-replicate SD.
+gHill_par_foxa1_k4fh[bc_full_list, "hepG2_synergy"] <-
+  lib1_dose_synergy[bc_full_list,]$hepG2_synergy
+gHill_std_foxa1_k4fh[bc_full_list, "hepG2_synergy"] <-
+  lib1_dose_synergy_std[bc_full_list,]$hepG2_synergy_sd
+
+ #   r2_cut <- 0.
+#portion_cut <- .5
+error_sum <- data.frame(
+  sd2 = lib1_dose_synergy_std[bc_full_list,]$hepG2_synergy_sd,
+  row.names = bc_full_list
+)
+
+#smallError_list <- bc_full_list[which(fit_std_foxa1_k1f[bc_full_list,]$regP<portion_cut*abs(gHill_par_foxa1_k1f[bc_full_list,]$regP) & gHill_par_foxa1_k1f[bc_full_list,]$r2>r2_cut)]
+
+#smallError_list2 <- bc_full_list[which(fit_std_foxa1_k3h[bc_full_list,]$regP<portion_cut*abs(gHill_par_foxa1_k3h[bc_full_list,]$regP)  & gHill_par_foxa1_k1f[bc_full_list,]$r2>r2_cut)]
+
+#smallError_list3 <- bc_full_list[which(fit_std_foxa1_k4fh[bc_full_list,]$regP<portion_cut*abs(gHill_par_foxa1_k4fh[bc_full_list,]$regP )&  gHill_par_foxa1_k1f[bc_full_list,]$r2>r2_cut)]
+
+
+
+#synergy_smallError <- intersect(smallError_list3,intersect(smallError_list2,smallError_list))
+
+#synergy_smallError <- bc_full_list[which(gHill_std_foxa1_k4fh[bc_full_list,]$hepG2_synergy<log(2)/2 )]
+
+
+#synergy_smallError <- bc_full_list[which(gHill_std_foxa1_k4fh[bc_full_list,]$hepG2_synergy<log(2) | gHill_std_foxa1_k4fh[bc_full_list,]$hepG2_synergy<portion_cut*abs(gHill_par_foxa1_k4fh[bc_full_list,]$hepG2_synergy))]
+
+synergy_smallError <- final_smallError
+fc_k4fh <- data.frame(fc=gHill_par_foxa1_k4fh[bc_full_list,]$Fmax/gHill_par_foxa1_k4fh[bc_full_list,]$basal,row.names = bc_full_list)
+fc_k1f <- data.frame(fc=gHill_par_foxa1_k1f[bc_full_list,]$Fmax/gHill_par_foxa1_k1f[bc_full_list,]$basal,row.names = bc_full_list)
+fc_k3h <- data.frame(fc=gHill_par_foxa1_k3h[bc_full_list,]$Fmax/gHill_par_foxa1_k3h[bc_full_list,]$basal,row.names = bc_full_list)
+
+#synergy_smallError <- bc_full_list
+
+#
+tmp <- gHill_par_foxa1_k4fh[synergy_smallError,]
+tmp$regPsum <- gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP
+```
+
+### compare regPs
+```{r ,  eval=T,fig.width=3.3, fig.height=3.3,  echo=F, dpi=300, warning=F, results='show'}
+
+par(pty = "s")
+par(bg=NA)
+
+
+
+plot(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP,gHill_par_foxa1_k4fh[synergy_smallError,]$regP,log="",pch=16,cex=1,col=synergy_line_col[synergy_smallError],xlim=c(log(0.5),6.5)/log(2),ylim=c(log(0.5),6.5)/log(2),axes = FALSE, ann = FALSE)
+arrows(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP, gHill_par_foxa1_k4fh[synergy_smallError,]$regP-gHill_std_foxa1_k4fh[synergy_smallError,]$regP, gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP, gHill_par_foxa1_k4fh[synergy_smallError,]$regP+gHill_std_foxa1_k4fh[synergy_smallError,]$regP, length=0, angle=90, code=3,col=synergy_line_col[synergy_smallError])
+arrows(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP-error_sum[synergy_smallError,], gHill_par_foxa1_k4fh[synergy_smallError,]$regP, gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP+error_sum[synergy_smallError,], gHill_par_foxa1_k4fh[synergy_smallError,]$regP, length=0, angle=90, code=3,col=synergy_line_col[synergy_smallError])
+
+points(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP,gHill_par_foxa1_k4fh[synergy_smallError,]$regP,pch=1,cex=1,col=alpha("black",0.15))
+
+box()
+  axis(2, at = c(0,2,4,6,8),   lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  axis(1, at = c(0,2,4,6,8), lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+      title(ylab="RegP_FH",xlab="RegP_F + RegP_H", line=1.2, cex.lab=1.)
+  #lines(c(log(0.7),log(300)),c(log(0.7),log(300)), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+  new_diag(par('usr'))
+```
+  
+```{r ,  eval=F,fig.width=3., fig.height=3.8,  echo=F,  warning=F, results='show'}
+"#F2E394" (muted yellow)
+
+"#E6D97A" (soft gold)
+
+"#F4E1A1" (light pastel yellow)
+
+
+plot(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP,gHill_par_foxa1_k4fh[synergy_smallError,]$regP,log="",pch=1,cex=1,col=alpha("white",0.15),xlim=c(log(0.7),log(300)),ylim=c(log(0.7),log(300)),axes = FALSE, ann = FALSE)
+box()
+  axis(2, at = c(0,2.5,5),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  axis(1, at = c(0,2.5,5), lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+      title(ylab="RegPF&H",xlab="RegPF + RegPH", line=1.2, cex.lab=1.)
+  lines(c(log(0.7),log(300)),c(log(0.7),log(300)), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+
+for (i in bc_full_list) {
+  transparency <- .75
+  size= 1-1*gHill_std_foxa1_k4fh[i,]$hepG2_synergy#/log(2)
+  col_one <- alpha(synergy_col,transparency)
+  points(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP,gHill_par_foxa1_k4fh[i,]$regP,pch=16,cex=size,col=alpha(synergy_col,transparency))
+    points(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP,gHill_par_foxa1_k4fh[i,]$regP,pch=1,cex=size,col=alpha("black",transparency))
+
+ # arrows(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP, gHill_par_foxa1_k4fh[i,]$regP-gHill_std_foxa1_k4fh[i,]$regP, gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP, gHill_par_foxa1_k4fh[i,]$regP+gHill_std_foxa1_k4fh[i,]$regP, length=.0, angle=90, code=3,col=col_one) #"#9075ab"
+#arrows(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP-error_sum[i,], gHill_par_foxa1_k4fh[i,]$regP, gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP+error_sum[i,], gHill_par_foxa1_k4fh[i,]$regP, length=.0, angle=90, code=3,col=col_one) #"#9075ab"
+
+}
+
+plot(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP,gHill_par_foxa1_k4fh[synergy_smallError,]$regP,log="",pch=1,cex=1,col=alpha("white",0.15),xlim=c(log(0.7),log(300)),ylim=c(log(0.7),log(300)),axes = FALSE, ann = FALSE)
+box()
+  axis(2, at = c(0,2.5,5),   lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  axis(1, at = c(0,2.5,5), lwd = 1, tck = -0.015, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+      title(ylab="RegPF&H",xlab="RegPF + RegPH", line=1.2, cex.lab=1.)
+  lines(c(log(0.7),log(300)),c(log(0.7),log(300)), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+
+for (i in bc_full_list) {
+  transparency <- 1-1*gHill_std_foxa1_k4fh[i,]$hepG2_synergy#/log(2)
+  size= 1
+  col_one <- alpha(synergy_col,transparency)
+  points(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP,gHill_par_foxa1_k4fh[i,]$regP,pch=16,cex=size,col=alpha(synergy_col,transparency))
+    points(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP,gHill_par_foxa1_k4fh[i,]$regP,pch=1,cex=size,col=alpha("black",transparency))
+
+  arrows(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP, gHill_par_foxa1_k4fh[i,]$regP-gHill_std_foxa1_k4fh[i,]$regP, gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP, gHill_par_foxa1_k4fh[i,]$regP+gHill_std_foxa1_k4fh[i,]$regP, length=.0, angle=90, code=3,col=col_one) #"#9075ab"
+arrows(gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP-error_sum[i,], gHill_par_foxa1_k4fh[i,]$regP, gHill_par_foxa1_k1f[i,]$regP+gHill_par_foxa1_k3h[i,]$regP+error_sum[i,], gHill_par_foxa1_k4fh[i,]$regP, length=.0, angle=90, code=3,col=col_one) #"#9075ab"
+
+}
+  
+#plot()
+```
+
+### synergy cutoff
+
+```{r ,  eval=T,fig.width=3.3, fig.height=3.3,  echo=F,  warning=F, results='show',dpi=300}
+
+
+
+t_here <- qt(0.975, df=2)
+t_here <- qt(0.995, df=2)
+
+pos_tags <- synergy_smallError[which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy>0)]
+neg_tags <- synergy_smallError[which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy<0)]
+ind_tags <- synergy_smallError[!synergy_smallError %in% union(pos_tags,neg_tags)]
+
+
+par(pty = "s")
+#par(bg=NA)
+color_syn <- c()
+color_syn[synergy_smallError %in% pos_tags] <- synergy_col
+color_syn[synergy_smallError %in% neg_tags] <- "#F4E1A1"
+color_syn[synergy_smallError %in% ind_tags] <- "gray"
+
+hepG2_fh_activity <- setNames(
+  sapply(bc_full_list, function(seq_id) {
+    predict_log2_activity_over_basal_one(
+      hepG2_foxa1_conc*hepG2_hnf4a_conc,
+      gHill_par_foxa1_k4fh_old,
+      seq_id
+    )
+  }),
+  bc_full_list
+)
+
+hepG2_single_activity_sum <- setNames(
+  sapply(bc_full_list, function(seq_id) {
+    predict_log2_activity_over_basal_one(
+      hepG2_foxa1_conc,
+      gHill_par_foxa1_k1f,
+      seq_id
+    ) +
+      predict_log2_activity_over_basal_one(
+        hepG2_hnf4a_conc,
+        gHill_par_foxa1_k3h,
+        seq_id
+      )
+  }),
+  bc_full_list
+)
+
+one_point <- function(synergy_smallError,color_syn){
+  points(hepG2_single_activity_sum[synergy_smallError],hepG2_fh_activity[synergy_smallError],pch=16,cex=1,col=color_syn)
+
+points(hepG2_single_activity_sum[synergy_smallError],hepG2_fh_activity[synergy_smallError],pch=1,cex=1,col=alpha("black",0.15))
+}
+
+# Three-category color alternative for the initial plotting canvas:
+# plot(hepG2_single_activity_sum[synergy_smallError],hepG2_fh_activity[synergy_smallError],log="",pch=16,cex=0,col=color_syn,xlim=c(log(0.5),5)/log(2),ylim=c(log(0.5),5)/log(2),axes = FALSE, ann = FALSE)
+plot(hepG2_single_activity_sum[synergy_smallError],hepG2_fh_activity[synergy_smallError],log="",pch=16,cex=0,col=synergy_line_col[synergy_smallError],xlim=c(log(0.5),5)/log(2),ylim=c(log(0.5),5)/log(2),axes = FALSE, ann = FALSE)
+plot_order <- synergy_smallError[order(error_sum[synergy_smallError,]+gHill_std_foxa1_k4fh[synergy_smallError,]$regP,decreasing = TRUE)]
+
+for (i in c(plot_order)) {
+  # Three-category color alternative (significantly positive, negative, or
+  # indistinguishable from zero):
+  # one_point(i, color_syn[match(i, synergy_smallError)])
+
+  # Continuous HepG2-synergy color, matching the dose curves above.
+  one_point(i, synergy_line_col[i])
+}
+# 
+# for (i in c(ind_tags)) {
+#   one_point(i,"gray")
+# }
+# for (i in c(neg_tags)) {
+#   one_point(i,"#F4E1A1")
+# }
+# for (i in c(pos_tags)) {
+#   one_point(i,"#9075ab")
+# }
+
+# arrows(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP, gHill_par_foxa1_k4fh[synergy_smallError,]$regP-gHill_std_foxa1_k4fh[synergy_smallError,]$regP, gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP, gHill_par_foxa1_k4fh[synergy_smallError,]$regP+gHill_std_foxa1_k4fh[synergy_smallError,]$regP, length=0, angle=90, code=3,col=color_syn) #"#9075ab"
+# arrows(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP-error_sum[synergy_smallError,], gHill_par_foxa1_k4fh[synergy_smallError,]$regP, gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP+error_sum[synergy_smallError,], gHill_par_foxa1_k4fh[synergy_smallError,]$regP, length=0, angle=90, code=3,col=color_syn) #"#9075ab"
+# 
+# points(gHill_par_foxa1_k1f[synergy_smallError,]$regP+gHill_par_foxa1_k3h[synergy_smallError,]$regP,gHill_par_foxa1_k4fh[synergy_smallError,]$regP,pch=1,cex=1,col=alpha("black",0.15))
+
+box()
+  axis(2, at = c(0,2,4,6,8),   lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  axis(1, at = c(0,2,4,6,8), lwd = 1, tck = -0.02, col=rgb(0,0,0,0), col.ticks = "black", padj=-2, cex.axis=0.8)
+      title(ylab="FH phsiological\nactivity",xlab="(F+H) physiological\nactivity", line=1.2, cex.lab=1.)
+  #lines(c(log(0.7),log(300)),c(log(0.7),log(300)), col= alpha('#A6A6A6',0.75), lwd = 1.5)
+  new_diag(par('usr'))
+
+# FH regulatory potential versus concentration-specific HepG2 synergy.
+# Horizontal error bars: HepG2 synergy SD; vertical error bars: FH regP SD.
+plot(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,
+     gHill_par_foxa1_k4fh[synergy_smallError,]$regP,
+     pch=16, cex=0, axes=FALSE, ann=FALSE)
+#  new_diag(par('usr'))
+
+regP_synergy_plot_order <- synergy_smallError[
+  order(gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy +
+          gHill_std_foxa1_k4fh[synergy_smallError,]$regP,
+        decreasing=TRUE)
+]
+
+for (i in regP_synergy_plot_order) {
+  # Three-category color alternative (significantly positive, negative, or
+  # indistinguishable from zero):
+  # point_col <- color_syn[match(i, synergy_smallError)]
+
+  # Continuous HepG2-synergy color, matching the dose curves above.
+  point_col <- synergy_line_col[i]
+
+  arrows(gHill_par_foxa1_k4fh[i,]$hepG2_synergy - gHill_std_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP,
+         gHill_par_foxa1_k4fh[i,]$hepG2_synergy + gHill_std_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP,
+         length=0, angle=90, code=3, col=point_col)
+  arrows(gHill_par_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP - gHill_std_foxa1_k4fh[i,]$regP,
+         gHill_par_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP + gHill_std_foxa1_k4fh[i,]$regP,
+         length=0, angle=90, code=3, col=point_col)
+  points(gHill_par_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP,
+         pch=16, cex=1, col=point_col)
+  points(gHill_par_foxa1_k4fh[i,]$hepG2_synergy,
+         gHill_par_foxa1_k4fh[i,]$regP,
+         pch=1, cex=1, col=alpha("black",0.15))
+}
+
+box()
+axis(1, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=-2, cex.axis=0.8)
+axis(2, lwd=1, tck=-0.02, col=rgb(0,0,0,0), col.ticks="black",
+     padj=1.7, cex.axis=0.8)
+title(xlab="HepG2 synergy", ylab="RegP_FH", line=1.2, cex.lab=1)
+abline(v=0, col=alpha('#A6A6A6',0.75), lwd=1.5, lty=5)
+
+
+s_stat <- data.frame(FH=rep(NA,3),Fonly=rep(NA,3),Honly=rep(NA,3),none=rep(NA,3),all=rep(NA,3),row.names = c("POSsynergy","NOsynergy","NEGsynergy"))
+
+s_stat[1,]$all <- length(which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy>0))/length(synergy_smallError)
+s_stat[3,]$all <- length(which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy<0))/length(synergy_smallError)
+s_stat[2,]$all <- 1-s_stat[1,]$all-s_stat[3,]$all
+# tmp <- data.frame(s=gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,sd=gHill_std_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,row.names = synergy_smallError)
+
+
+ length(which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy< -log(1.5)))/length(synergy_smallError)
+ length(which(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy> log(1.5)))/length(synergy_smallError)
+
+ 
+ binding_cutoff_f <- 1/(conc_foxa1[6])#quantile(kd_score_F_table$kas,0.75) 
+ binding_cutoff_h <- 1/(conc_hnf4a_alone[6])#quantile(kd_score_H_table$kas,0.75) 
+ 
+final_smallError_bothBS <- synergy_smallError[which(lib1_tfbsn[synergy_smallError,]$h>0 & lib1_tfbsn[synergy_smallError,]$f>0 )] #synergy_smallError[which(kd_score_F_table[synergy_smallError,]$kas>binding_cutoff_f &kd_score_H_table[synergy_smallError,]$kas>binding_cutoff_h )]
+s_stat[1,]$FH <- length(which(gHill_par_foxa1_k4fh[final_smallError_bothBS,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[final_smallError_bothBS,]$hepG2_synergy>0))/length(final_smallError_bothBS)
+s_stat[3,]$FH<- length(which(gHill_par_foxa1_k4fh[final_smallError_bothBS,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[final_smallError_bothBS,]$hepG2_synergy<0))/length(final_smallError_bothBS)
+s_stat[2,]$FH <- 1-s_stat[1,]$FH-s_stat[3,]$FH
+
+only_F <- synergy_smallError[which(lib1_tfbsn[synergy_smallError,]$h<1 & lib1_tfbsn[synergy_smallError,]$f>0 )] #synergy_smallError[which(kd_score_F_table[synergy_smallError,]$kas>binding_cutoff_f &kd_score_H_table[synergy_smallError,]$kas<=binding_cutoff_h )]
+s_stat[1,]$Fonly <- length(which(gHill_par_foxa1_k4fh[only_F,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[only_F,]$hepG2_synergy>0))/length(only_F)
+s_stat[3,]$Fonly<- length(which(gHill_par_foxa1_k4fh[only_F,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[only_F,]$hepG2_synergy<0))/length(only_F)
+s_stat[2,]$Fonly <- 1-s_stat[1,]$Fonly-s_stat[3,]$Fonly
+
+only_H <- synergy_smallError[which(lib1_tfbsn[synergy_smallError,]$f<1 & lib1_tfbsn[synergy_smallError,]$h>0 )] #synergy_smallError[which(kd_score_F_table[synergy_smallError,]$kas<=binding_cutoff_f &kd_score_H_table[synergy_smallError,]$kas>binding_cutoff_h )]
+s_stat[1,]$Honly <- length(which(gHill_par_foxa1_k4fh[only_H,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[only_H,]$hepG2_synergy>0))/length(only_H)
+s_stat[3,]$Honly<- length(which(gHill_par_foxa1_k4fh[only_H,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[only_H,]$hepG2_synergy<0))/length(only_H)
+s_stat[2,]$Honly <- 1-s_stat[1,]$Honly-s_stat[3,]$Honly
+
+only_no <-synergy_smallError[which(lib1_tfbsn[synergy_smallError,]$h<1 & lib1_tfbsn[synergy_smallError,]$f<1 )]  #synergy_smallError[which(kd_score_F_table[synergy_smallError,]$kas<=binding_cutoff_f &kd_score_H_table[synergy_smallError,]$kas<=binding_cutoff_h )]
+s_stat[1,]$none <- length(which(gHill_par_foxa1_k4fh[only_no,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[only_no,]$hepG2_synergy>0))/length(only_no)
+s_stat[3,]$none<- length(which(gHill_par_foxa1_k4fh[only_no,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[only_no,]$hepG2_synergy<0))/length(only_no)
+s_stat[2,]$none <- 1-s_stat[1,]$none-s_stat[3,]$none
+
+
+print(c(length(only_F),length(only_H),length(only_no),length(final_smallError_bothBS)))
+#      plot(gHill_par_foxa1_k4fh[bc_full_list,]$basal,gHill_par_foxa1_k1f[bc_full_list,]$basal,log="xy")
+#      plot(gHill_par_foxa1_k4fh[bc_full_list,]$basal,gHill_par_foxa1_k3h[bc_full_list,]$basal,log="xy")
+
+#plot(,fc_k4fh[synergy_smallError,]/(fc_k1f[synergy_smallError,]*fc_k3h[synergy_smallError,]))
+```
+
+```{r ,  eval=T,fig.width=3.2, fig.height=2,  echo=F,  warning=F, results='show',dpi=300}
+
+colors <- c(fh_col,h_col,f_col,"gray")
+groupname <- c("FH","H","F","none")
+color2 <- c("#FAF6F0")
+groupname2 <- c("all")
+
+df <- data.frame(
+  group = rep(NA, length(synergy_smallError)),
+  value = gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,row.names = synergy_smallError
+)
+df$group <- ifelse(rownames(df) %in% only_no, "none", df$group)
+df$group <- ifelse(rownames(df) %in% only_F, "F", df$group)
+df$group <- ifelse(rownames(df) %in% only_H, "H", df$group)
+df$group <- ifelse(rownames(df) %in% final_smallError_bothBS, "FH", df$group)
+
+library(ggdist)
+df2 <- data.frame(
+  group = rep("all", length(synergy_smallError)),
+  value = gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy)
+#df <- rbind(df, df2)
+ggdist_plot <- function(df,groupname,colors,slab_linewidth=0){names(colors) <- groupname
+df$group <- factor(df$group, levels = groupname)
+result <- ggplot(df, aes(x=value, y=group, fill=group)) + 
+  geom_vline(
+    xintercept = 0,
+    linetype = "dashed",
+    color = "gray20",
+    linewidth = 0.25
+  )+
+    stat_halfeye(adjust = 1.5,justification = 0,width = 1, slab_linewidth = slab_linewidth, slab_color="black",
+    .width = 0,side="right",point_size = 0) +
+ # geom_violin(adjust = 2,trim=TRUE) +
+    geom_boxplot(trim=FALSE,width = 0.17,fill="white",outlier.size = 1) +
+  scale_fill_manual(values=colors)+
+  theme(legend.position = "none",
+  #axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  #axis.text.y.right  = element_text(angle = 270, vjust = 0.5, hjust = 0.5),
+  axis.ticks.length = unit(2, "pt") ,
+  axis.title.x = element_text(size=10),
+  plot.title = element_text(size = 0), axis.ticks.y.right = element_line(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank() 
+  )+labs(
+    x = "Synergy Score",
+    y = NULL,title = NULL,
+  )
+#+coord_cartesian(ylim = ylim)
+return(result)}
+
+ggdist_plot(df,groupname,colors)
+```
+
+```{r ,  eval=T,fig.width=3.2, fig.height=1.2,  echo=F,  warning=F, results='show',dpi=300}
+
+ggdist_plot(df2,groupname2,color2,slab_linewidth=0.25)
+
+```
+
+```{r ,  eval=F,fig.width=3.9, fig.height=3.,  echo=F,  warning=F, results='show',dpi=300}
+par(
+  mfrow = c(5,1),
+  mar = c(0,2,0,0),   # remove margins inside panels
+  oma = c(3,0,0,0)    # remove outer margins
+)
+
+smooth_hist <- function(x,col="gray",aty=c(0,500)){
+  dens <- density(x)
+  h <- hist(x, probability = TRUE, col = "white", main = "",xlim=c(-1.6,5.5),border="white",ylim=c(0,300),axes=FALSE,ann=FALSE,plot = FALSE) #ylim=c(0,max(counts)*1.5)
+  bw <- diff(h$breaks)[1]
+  counts <- dens$y * length(x)* bw
+  hist(x, probability = TRUE, col = "white", main = "",xlim=c(-1.6,5.5),border="white",ylim=c(0,max(counts)*1.5),axes=FALSE,ann=FALSE)
+  box()
+  axis(2, at = aty,   lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=1.3, cex.axis=1)
+  axis(1, at = c(-1,0,1,2,3,4,5), lwd = 1, tck = -0.035, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.3, cex.axis=1)
+  title(ylab="Frequency",xlab="", line=1.5, cex.lab=1.)
+# Overlay smoothed density
+  polygon(dens$x, dens$y * length(x) * bw, col = col, border = col)
+lines(dens$x, dens$y * length(x) * bw, col = "black", lwd = 1)
+
+}
+
+
+
+smooth_hist(gHill_par_foxa1_k4fh[only_F,]$hepG2_synergy,f_col)
+smooth_hist(gHill_par_foxa1_k4fh[only_H,]$hepG2_synergy,h_col)
+smooth_hist(gHill_par_foxa1_k4fh[final_smallError_bothBS,]$hepG2_synergy,fh_col)
+
+#smooth_hist(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,"darkgreen")
+smooth_hist(gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,"#FAF6F0",aty=c(0,200))
+smooth_hist(gHill_par_foxa1_k4fh[only_no,]$hepG2_synergy,"gray")
+
+
+
+colors <- c(fh_col,h_col,f_col,"gray","#FAF6F0")
+groupname <- c("FH","H","F","none","all")
+
+df <- data.frame(
+  group = rep(NA, length(synergy_smallError)),
+  value = gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy,row.names = synergy_smallError
+)
+df$group <- ifelse(rownames(df) %in% only_no, "none", df$group)
+df$group <- ifelse(rownames(df) %in% only_F, "F", df$group)
+df$group <- ifelse(rownames(df) %in% only_H, "H", df$group)
+df$group <- ifelse(rownames(df) %in% final_smallError_bothBS, "FH", df$group)
+
+library(ggdist)
+
+df <- rbind(df, data.frame(
+  group = rep("all", length(synergy_smallError)),
+  value = gHill_par_foxa1_k4fh[synergy_smallError,]$hepG2_synergy))
+names(colors) <- groupname
+df$group <- factor(df$group, levels = groupname)
+result <- ggplot(df, aes(x=value, y=group, fill=group)) +
+    stat_halfeye(adjust = 1.5,justification = 0,width = 1, slab_linewidth = 0.2 ,slab_color="black",
+    .width = 0,side="right",point_size = 0) +
+ # geom_violin(adjust = 2,trim=TRUE) +
+    geom_boxplot(trim=FALSE,width = 0.1,fill="white") +
+  scale_fill_manual(values=colors)+
+  theme(legend.position = "none",
+  axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.text.y.right  = element_text(angle = 270, vjust = 0.5, hjust = 0.5),
+  axis.ticks.length = unit(2, "pt") ,
+  axis.title.x = element_blank(),
+  plot.title = element_text(size = 5), axis.ticks.y.right = element_line(),
+  #axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank() 
+  )+labs(
+    x = NULL,
+    y = NULL,title = ylab,
+  )#+coord_cartesian(ylim = ylim)
+result
+
+ ggplot(df, aes(x=value, y=group, fill=group)) +
+    stat_halfeye(adjust = 1.5,justification = 0,width = 1, slab_linewidth = 0.2 ,slab_color="black",
+    .width = 1,side="right",point_size = 1) +
+ # geom_violin(adjust = 2,trim=TRUE) +
+  #  geom_boxplot(trim=FALSE,width = 0.1,fill="white") +
+  scale_fill_manual(values=colors)+
+  theme(legend.position = "none",
+  axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+  axis.text.y.right  = element_text(angle = 270, vjust = 0.5, hjust = 0.5),
+  axis.ticks.length = unit(2, "pt") ,
+  axis.title.x = element_blank(),
+  plot.title = element_text(size = 5), axis.ticks.y.right = element_line(),
+  #axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_rect(color = "black", fill = NA),
+  panel.background = element_blank() 
+  )+labs(
+    x = NULL,
+    y = NULL,title = ylab,
+  )#+coord_cartesian(ylim = ylim)
+
+```
+
+### does synergy prefer high F aff or H aff?
+
+```{r ,  eval=F,fig.width=3.6, fig.height=4.,  echo=F,  warning=F, results='show'}
+synergy_aff <- gHill_par_foxa1_k4fh[final_smallError,"hepG2_synergy",drop=F]
+synergy_aff$f_aff <- log(kd_score_F_table[final_smallError,]$kas)
+synergy_aff$h_aff <- log(kd_score_H_table[final_smallError,]$kas)
+#synergy_aff$x1 <- rep(1, nrow(synergy_aff))
+
+synergy_aff$half <- with(synergy_aff, ave(hepG2_synergy, rep(1, nrow(synergy_aff)),FUN = function(x) {
+  q30 <- quantile(x, 3/10, na.rm = TRUE)
+  q70 <- quantile(x, 7/10, na.rm = TRUE)
+  
+  ifelse(x >= q70, "top",
+         ifelse(x <= q30, "bottom", "middle"))
+}))
+
+synergy_aff$half <- factor(synergy_aff$half, levels = c("bottom","middle", "top"))
+    ggplot(synergy_aff[synergy_aff$half %in% c("top", "middle","bottom"), ], aes(y = f_aff,fill=half)) +
+  geom_boxplot() +
+  #  stat_summary(fun = median, geom = "crossbar",aes(color = tfn), width = 0.5, size = 1)+
+  #scale_y_continuous(limits = yrange)+
+  #  scale_x_discrete(limits = unique(df_foranova$x1),labels = unique(df_foranova$x1))+
+  labs(title = "", x = "", y = "F aff") +
+  theme_minimal(base_size = 15)#+ theme(legend.position = "none")
+
+        ggplot(synergy_aff[synergy_aff$half %in% c("top","middle", "bottom"), ], aes(y = h_aff,fill=half)) +
+  geom_boxplot() +
+  #  stat_summary(fun = median, geom = "crossbar",aes(color = tfn), width = 0.5, size = 1)+
+  #scale_y_continuous(limits = yrange)+
+  #  scale_x_discrete(limits = unique(df_foranova$x1),labels = unique(df_foranova$x1))+
+  labs(title = "", x = "", y = "H aff") +
+  theme_minimal(base_size = 15)#+ theme(legend.position = "none")
+        
+                ggplot(synergy_aff[synergy_aff$half %in% c("bottom", "top"), ], aes(x=half,y = h_aff-f_aff,fill=half)) +
+  geom_boxplot() +
+  #  stat_summary(fun = median, geom = "crossbar",aes(color = tfn), width = 0.5, size = 1)+
+  #scale_y_continuous(limits = yrange)+
+  #  scale_x_discrete(limits = unique(df_foranova$x1),labels = unique(df_foranova$x1))+
+  labs(title = "", x = "", y = "H aff") +
+  theme_minimal(base_size = 15)+
+  stat_compare_means(method = "wilcox.test",method.args = list(alternative = "less"),comparisons = list(c("bottom","top")))#+ theme(legend.position = "none")
+    
+plot(synergy_aff$hepG2_synergy,synergy_aff$f_aff-synergy_aff$h_aff)
+cor(synergy_aff$hepG2_synergy,synergy_aff$f_aff-synergy_aff$h_aff,method = "spearman")
+
+```
+
+
+```{r ,  eval=T,fig.width=3.6, fig.height=4.,  echo=F,  warning=F, results='show'}
+
+df <- data.frame(
+  Group = c("G1", "G2"),
+  A = c(20, 30),
+  B = c(30, 10),
+  C = c(50, 60)
+)
+#print(df)
+
+counts <- as.matrix(df[, -1])
+
+# Compute proportions
+props <- prop.table(counts, margin=1)  # margin=1 → row-wise (per group)
+
+# Add row names to match group names
+rownames(props) <- df$Group
+
+# Plot
+barplot(as.matrix(s_stat), 
+        beside=FALSE, 
+        col=c("purple", "grey", "orange"),
+       # legend=row.names(s_stat),
+        ylab="Proportion",
+        main="100% Stacked Barplot")
+
+pos_s <- final_smallError[which(gHill_par_foxa1_k4fh[final_smallError,]$hepG2_synergy-t_here*gHill_std_foxa1_k4fh[final_smallError,]$hepG2_synergy>0)]
+neg_s <- final_smallError[which(gHill_par_foxa1_k4fh[final_smallError,]$hepG2_synergy+t_here*gHill_std_foxa1_k4fh[final_smallError,]$hepG2_synergy<0)]
+
+boxplot(gHill_par_foxa1_k4fh[pos_s,]$hepG2_synergy,gHill_par_foxa1_k4fh[neg_s,]$hepG2_synergy)
+```
+
+### BS #
+
+```{r ,  eval=T,fig.width=1.7, fig.height=5.88,  echo=F,  warning=F, results='show',dpi=300}
+par(mfrow = c(4, 1),
+    mar = c(0.3, 0, 0.3, 0),   # small bottom/top margins → slight gap
+    oma = c(2, 2, 0, 0))
+# mfrow=c(4,1) automatically sets cex=0.66; restore it so text matches
+# the separately drawn FH panels.
+par(cex = 1)
+#gHill_par_foxa1_k1f$kas <- kd_score_F_table[bc_full_list,]$kas
+
+tfbsn_groups <- function(data_, group,logy="",ylab_="",linesadd=FALSE,base_col = "#9075ab",yat=c(0,1,2,3),ylabel=NA,labeln=F,xlabel=F){#"#E86F77"
+  test <- cor.test(data_[[group]], data_$fn,method = "spearman")
+  n <- length(unique(data_$fn))
+  med <- tapply(data_[[group]], data_$fn, mean)
+  se <- tapply(data_[[group]], data_$fn, function(x) 1.96*sd(x)/sqrt(length(x))) ### 1.96SE is 95% CI
+  y_min <- min(c(med,med - se),na.rm = TRUE)
+  y_max <- max(c(med,med + se),na.rm = TRUE)
+  pad <- 0.05 * (y_max - y_min)
+  grad <- (colorRampPalette(c("white", base_col))(n))
+  bp <- boxplot(as.formula(paste(group, "~ fn")) , data = data_,log=logy,col = grad,axes = FALSE, ann = FALSE,lwd = 0.75,medlwd = 0.8,at=sort(unique(data_$fn)),outcex=0.75)
+  if(all(is.na(ylabel))){
+  axis(2, at = yat,   lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=1.5, cex.axis=0.8)
+  }else{
+      axis(2, at = yat,labels = ylabel,   lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=1.5, cex.axis=0.8)
+  }
+if(xlabel){  axis(1, at = c(0,1,2,3,4,5,6), lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.9, cex.axis=0.8)
+}    
+  title(
+    ylab=ylab_,
+    xlab=if (xlabel) "Number of TF sites" else "",
+    line=1.,
+    cex.lab=0.8
+  )
+  box()
+if(labeln){  n <- table(data_$fn)
+text(x = seq_along(bp$names)-1,
+     y = bp$stats[5, ],   # top whisker
+     labels = paste0("n=", n[bp$names]),
+     pos = 3,cex=0.8)
+}  #main=paste("p=",test$p.value,"\nrho=",as.numeric(test$estimate),sep = "")
+  names <- row.names(data_)
+
+# x positions and medians
+if(logy=="y"){
+  x <- as.numeric(bp$names)
+y <- log(bp$stats[3, ])
+fit <- lm(y ~ x)
+x_full <- seq(min(x), max(x), length.out = 100)
+y_full <- exp(predict(fit, newdata = data.frame(x = x_full)))
+}else{x <- as.numeric(bp$names)
+y <- bp$stats[3, ]
+fit <- lm(y ~ x)
+x_full <- seq(min(x), max(x), length.out = 100)
+y_full <- predict(fit, newdata = data.frame(x = x_full))
+}
+    lines(x_full, y_full, col = alpha("white",0.5), lwd = 2)
+  lines(x_full, y_full, col = "gray50", lwd = 1,lty=5)
+
+  if(linesadd){
+    grep("aff_chr2_231915124_231915324_FH2.2",names)
+    for (i in c(1:5)) {
+      lines(c(1,2),c(data_[paste0("aff_chr2_231915124_231915324_FH1",i,"5"),group],data_[paste0("aff_chr2_231915124_231915324_FH2",i,"2"),group]),lwd=0.5)
+      lines(c(1,2),c(data_[paste0("aff_chr2_231915124_231915324_FH5",i,"1"),group],data_[paste0("aff_chr2_231915124_231915324_FH2",i,"2"),group]),lwd=0.5)
+    }
+  }
+  if(test$p.value>0.1){
+    p_text <- paste0("p = ", signif(test$p.value, 3))
+  }else{
+    p_text <- paste0("p = ", formatC(test$p.value, format = "e", digits = 2))
+  }
+  
+  #p_text <- paste0("p = ", formatC(pval, format = "e", digits = 2))
+  x_range <- range(data_$fn)
+  y_range <- range(data_[[group]], na.rm = TRUE)
+
+  x_pos <- x_range[2] - 0.5 * diff(x_range)
+  y_pos <- y_range[1] + 0.2 * diff(y_range)
+#  text(x_pos, y_pos, labels = p_text, pos = 1, cex = 1.)
+  #mtext(p_text, side = 3, line = 0.5)
+
+}
+
+gHill_par_foxa1_k1f[which(gHill_par_foxa1_k1f$fn>4),]$fn <- rep(4,length(which(gHill_par_foxa1_k1f$fn>4)))
+gHill_par_foxa1_k3h[which(gHill_par_foxa1_k3h$fn>4),]$fn <- rep(4,length(which(gHill_par_foxa1_k3h$fn>4)))
+
+tfbsn_groups(gHill_par_foxa1_k1f[smallError_list,],"Kd","y",ylab_="EC50",base_col = "#E86F77",yat=c(10,30,100))
+tfbsn_groups(gHill_par_foxa1_k1f[smallError_list,],"regP",ylab_="regP",base_col = "#E86F77",yat=c(0,1,2,3,4))
+tfbsn_groups(gHill_par_foxa1_k1f[smallError_list,],"n",ylab_="nH",base_col = "#E86F77",yat=c(1,5,10))
+tfbsn_groups(gHill_par_foxa1_k1f[smallError_list,],"basal",ylab_="Abasal",base_col = "#E86F77",yat=c(0,5,10),labeln = T,xlabel=T)
+
+#tfbsn_groups(gHill_par_foxa1_k1f[smallError_list,],"regP")
+
+tfbsn_groups(gHill_par_foxa1_k3h[smallError_list2,],"Kd","y",ylab_="EC50",base_col = "#4192D9",yat=c(1,5,25))
+tfbsn_groups(gHill_par_foxa1_k3h[smallError_list2,],"regP",ylab_="regP",base_col = "#4192D9",yat=c(0,1,2,3,4))
+tfbsn_groups(gHill_par_foxa1_k3h[smallError_list2,],"n",ylab_="nH",base_col = "#4192D9",yat=c(1,5,10))
+tfbsn_groups(gHill_par_foxa1_k3h[smallError_list2,],"basal",ylab_="Abasal",base_col = "#4192D9",yat=c(0,5,10),labeln = T,xlabel=T)
+
+test <- gHill_par_foxa1_k3h[smallError_list2,]
+
+
+gHill_par_foxa1_k4fh$fn <-(apply(lib1_tfbsn[bc_full_list,],1,min)) #  lib1_tfbsn[bc_full_list,]$h + lib1_tfbsn[bc_full_list,]$f
+gHill_par_foxa1_k4fh$fn <-  lib1_tfbsn[bc_full_list,]$h + lib1_tfbsn[bc_full_list,]$f
+
+gHill_par_foxa1_k4fh[which(gHill_par_foxa1_k4fh$fn>5),]$fn <- rep(6,length(which(gHill_par_foxa1_k4fh$fn>5)))
+```
+```{r ,  eval=T,fig.width=2.2, fig.height=1.9,  echo=F,  warning=F, results='show',dpi=300}
+
+#par(mfrow = c(5, 1),
+#    mar = c(0.3, 0, 0.3, 0),   # small bottom/top margins → slight gap
+#    oma = c(2, 2, 0, 0))
+
+par(mar = c(2, 2.5,1,1))
+  EC_F_label <- c(10,30,90)
+   EC_H_label <- c(10,20,30)
+  fh_EC_label_f <- EC_F_label^2*0.467 
+  fh_EC_label_h <- EC_H_label^2/0.467 
+
+
+tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"EC50","y",ylab_="EC50",base_col = "#9075ab",yat=EC_F_label,ylabel = EC_F_label,xlabel = T)
+ #   axis(4, at =(fh_EC_label_h) ,labels = EC_H_label,   lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.7, cex.axis=0.8,las = 0)
+tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"regP",ylab_="RegP",base_col = "#9075ab",yat=c(0,2,4,6,8),xlabel = T)
+tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"n",ylab_="nH",base_col = "#9075ab",yat=c(1,5,10),xlabel = T)
+tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"basal",ylab_="Abasal",base_col = "#9075ab",yat=c(0,5,10),labeln = T,xlabel = T)
+tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"hepG2_synergy",ylab_="Synergy",base_col = "#9075ab",yat=c(0,2,4,6),xlabel = T)
+#tfbsn_groups(gHill_par_foxa1_k4fh[smallError_list3,],"hepG2_synergy",ylab_="Synergy",base_col = synergy_col,yat=c(0,2,4,6),xlabel = T)
+
+```
+```{r ,  eval=F,fig.width=3, fig.height=6,  echo=F,  warning=F, results='show'}
+tfbsn_groups <- function(data_, group,logy="",ylab_="",linesadd=FALSE,base_col = "#9075ab",yat=c(0,1,2,3),ylabel=NA,labeln=F){#"#E86F77"
+  test <- cor.test(data_[[group]], data_$fn,method = "spearman")
+  n <- length(unique(data_$fn))
+  med <- tapply(data_[[group]], data_$fn, mean)
+  se <- tapply(data_[[group]], data_$fn, function(x) 1.96*sd(x)/sqrt(length(x))) ### 1.96SE is 95% CI
+  y_min <- min(c(med,med - se),na.rm = TRUE)
+  y_max <- max(c(med,med + se),na.rm = TRUE)
+  pad <- 0.05 * (y_max - y_min)
+  grad <- (colorRampPalette(c("white", base_col))(n+1))
+  bp <- boxplot(as.formula(paste(group, "~ fn")) , data = data_,log=logy,col = grad[-1],axes = FALSE, ann = FALSE,lwd = 0.75,medlwd = 0.8,at=sort(unique(data_$fn)))
+  if(all(is.na(ylabel))){
+  axis(2, at = yat,   lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  }else{
+      axis(2, at = yat,labels = ylabel,   lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=1.7, cex.axis=0.8)
+  }
+  axis(1, at = c(0,1,2,3,4,5,6), lwd = 1, tck = -0.025, col=rgb(0,0,0,0), col.ticks = "black", padj=-1.9, cex.axis=0.8)
+    title(ylab=ylab_,xlab="BS #", line=1.2, cex.lab=0.8)
+  box()
+if(labeln){  n <- table(data_$fn)
+text(x = seq_along(bp$names),
+     y = bp$stats[5, ],   # top whisker
+     labels = paste0("n=", n[bp$names]),
+     pos = 3,cex=0.8)
+}  #main=paste("p=",test$p.value,"\nrho=",as.numeric(test$estimate),sep = "")
+  names <- row.names(data_)
+
+# x positions and medians
+x <- as.numeric(bp$names)
+y <- bp$stats[3, ]
+
+# fit
+fit <- lm(y ~ x)
+# get full x-range of plot
+#usr <- par("usr")   # c(xmin, xmax, ymin, ymax)
+
+# draw line across entire plot width
+x_full <- seq(min(x), max(x), length.out = 100)
+y_full <- predict(fit, newdata = data.frame(x = x_full))
+
+lines(x_full, y_full, col = "red", lwd = 2)
+
+  if(linesadd){
+    grep("aff_chr2_231915124_231915324_FH2.2",names)
+    for (i in c(1:5)) {
+      lines(c(1,2),c(data_[paste0("aff_chr2_231915124_231915324_FH1",i,"5"),group],data_[paste0("aff_chr2_231915124_231915324_FH2",i,"2"),group]),lwd=0.5)
+      lines(c(1,2),c(data_[paste0("aff_chr2_231915124_231915324_FH5",i,"1"),group],data_[paste0("aff_chr2_231915124_231915324_FH2",i,"2"),group]),lwd=0.5)
+    }
+  }
+  if(test$p.value>0.1){
+    p_text <- paste0("p = ", signif(test$p.value, 3))
+  }else{
+    p_text <- paste0("p = ", formatC(test$p.value, format = "e", digits = 2))
+  }
+  
+  #p_text <- paste0("p = ", formatC(pval, format = "e", digits = 2))
+  x_range <- range(data_$fn)
+  y_range <- range(data_[[group]], na.rm = TRUE)
+
+  x_pos <- x_range[2] - 0.01 * diff(x_range)
+  y_pos <- y_range[1] + 0.1 * diff(y_range)
+  #text(x_pos, y_pos, labels = p_text, pos = 1, cex = 1.1)
+  mtext(p_text, side = 3, line = 0.5)
+   x <- as.numeric(names(med))
+   plot(x, med,ylim=c(y_min - pad, y_max + pad),xlab="BS #",ylab=paste(ylab_,"group mean"))
+   arrows(x, med - se, x, med + se,        angle = 90, code = 3, length = 0.05)
+   fit <- lm(med ~ x)
+   abline(fit, lwd = 1)
+   pval <- summary(fit)$coefficients[2, 4]
+   slope <- summary(fit)$coefficients[2, 1]
+   p_text <- paste0("slope = ", signif(slope, 3),   "\np = ", formatC(pval, format = "e", digits = 2))
+  # #p_text <- paste0("p = ", formatC(pval, format = "e", digits = 2))
+   x_range <- range(x)
+   y_range <- range(med + se, na.rm = TRUE)
+  # 
+   x_pos <- x_range[2] - 0.01 * diff(x_range)
+   y_pos <- y_range[2] - 0.1 * diff(y_range)
+   text(x_pos, y_pos, labels = p_text, pos = 2, cex = 1.1)
+}
+```
+
+
+
+### cor matrix
+
+```{r,  eval=T,fig.width=3.75, fig.height=3.75,  echo=F,  warning=F, results='show',dpi=300}
+
+name_map <- c("Kd","n","Fmax","basal","regP","hepG2_synergy")
+names(name_map) <- c("EC50","nH","Amax","Abasal","regP","hepG2_synergy")
+
+small_cor_matrix <- function(x=gHill_par_foxa1_k1f,kd=kd_score_F_table,smallError_list=smallError_list,use_=c("EC50","nH","Abasal","regP")){
+
+cor_matrix <- x[smallError_list,name_map[use_]]
+
+#cor_matrix$kas <- log(kd[smallError_list,]$kas)
+#cor_matrix$tfc <- TF_number[smallError_list,]
+
+colnames(cor_matrix) <- use_
+
+cormat <- round(cor(cor_matrix[,use_],use="pairwise.complete.obs"),2)
+#cormat[lower.tri(cormat)] <- NA
+melted_cormat <- melt(cormat, na.rm = TRUE)
+
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+ geom_tile(
+    data = subset(melted_cormat, Var1 == Var2),
+    fill = "grey80"
+  )+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson's r",na.value = "grey80")+ 
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 0.7, size = 12, hjust = 0.5),axis.text.y = element_text(angle = 45, vjust = -1.5, size = 12 , hjust= 1.4))+
+ coord_fixed()
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank())
+}
+
+fh_ka <- data.frame(kd_score_F_table[bc_full_list,]*kd_score_H_table[bc_full_list,],row.names = bc_full_list)
+
+# small_cor_matrix(gHill_par_foxa1_k1f,kd_score_F_table,smallError_list)
+# small_cor_matrix(gHill_par_foxa1_k3h,kd_score_H_table,smallError_list2)
+# small_cor_matrix(gHill_par_foxa1_k4fh,fh_ka,smallError_list3,c("EC50","nH","Abasal","regP","hepG2_synergy"))
+
+small_cor_matrix(gHill_par_foxa1_k1f,kd_score_F_table,final_smallError)
+small_cor_matrix(gHill_par_foxa1_k3h,kd_score_H_table,final_smallError)
+```
+
+```{r,  eval=T,fig.width=4.7, fig.height=4.7,  echo=F, warning=F, results='show',dpi=300}
+
+small_cor_matrix(gHill_par_foxa1_k4fh,fh_ka,final_smallError,c("EC50","nH","Abasal","regP","hepG2_synergy"))
+
+```
+
+
+
+
+### ANOVA
+
+```{r ,  eval=T,fig.width=3.6, fig.height=4,  echo=F,  warning=F, results='show',dpi=300}
+#TF_number <- (read.table("~/mnt/scratch/sequencing/fimoR5_pft_v1/noFOX_highExpr_cre_TFBScount.txt" ,sep = "\t",col.names = c("cre","n"),row.names = 1))
+foxa1_score_perPos <- read.table("~/mnt/scratch/sequencing/perpos_prob/foxa1_prob_nt1_v8v_v8_1e3_0725.txt" ,row.names = 1)
+foxa1_score_perPos_rc <- read.table("~/mnt/scratch/sequencing/perpos_prob/rc_foxa1_prob_nt1_v8v_v8_1e3_0725.txt" ,row.names = 1)
+foxa1_score_perPos_bothO <- foxa1_score_perPos+foxa1_score_perPos_rc
+foxa1_max_score <- apply(foxa1_score_perPos_bothO, 1, max, na.rm = TRUE)
+foxa1_max_score_f <- apply(foxa1_score_perPos, 1, max, na.rm = TRUE)
+foxa1_max_score_r <- apply(foxa1_score_perPos_rc, 1, max, na.rm = TRUE)
+
+hnf4a_score_perPos <- read.table("~/mnt/scratch/sequencing/perpos_prob/hnf4a_prob_nt30_v8v_v8_1e3_0725.txt" ,row.names = 1)
+hnf4a_score_perPos_rc <- read.table("~/mnt/scratch/sequencing/perpos_prob/rc_hnf4a_prob_nt30_v8v_v8_1e3_0725.txt" ,row.names = 1)
+hnf4a_score_perPos_bothO <- hnf4a_score_perPos+hnf4a_score_perPos_rc
+hnf4a_max_score <- apply(hnf4a_score_perPos_bothO, 1, max, na.rm = TRUE)
+hnf4a_max_score_f <- apply(hnf4a_score_perPos, 1, max, na.rm = TRUE)
+hnf4a_max_score_r <- apply(hnf4a_score_perPos_rc, 1, max, na.rm = TRUE)
+```
+
+```{r ,  eval=T,fig.width=3.6, fig.height=2.3,  echo=F,  warning=F, results='show',dpi=300}
+library(ggbreak)
+
+#bc_full_list <- row.names(hnf4a_score_perPos_bothO)
+aff_cutoff<- 0.5
+step=15
+all_tag  <-final_smallError
+#all_tag <- c("L1_8highH")
+
+
+### add orientation
+
+df_foranova <- data.frame(y=rep(NA,length(all_tag)),
+                            x1=log(kd_score_F_table[all_tag,]$kas*kd_score_H_table[all_tag,]$kas),
+                            x2=rep("0",length(all_tag)),  # number of F + H BS
+                            x3=rep("1000",length(all_tag)),  # F pos
+                            x4=rep("1000",length(all_tag)),  # H pos
+                            x5=rep("1000",length(all_tag)),  # F-H distance
+                            x6=rep("0",length(all_tag)),  # other TF number
+                            x7=rep("no",length(all_tag)),  # F orientation
+                            x8=rep("no",length(all_tag)),  # H orientation
+                            row.names = all_tag)
+  
+for (i in all_tag) {
+  df_foranova[i,]$x6 <- as.character(round(TF_number[i,]/1,0))
+  #df_foranova$x6[is.na(df_foranova$x6)] <- 0
+  
+  df_foranova[i,]$x2 <- as.character(lib1_tfbsn[i,]$f+lib1_tfbsn[i,]$h) #as.character(length(which(round(hnf4a_score_perPos_bothO[i,],1)>aff_cutoff )) + length(which(round(foxa1_score_perPos_bothO[i,],1)>aff_cutoff )))
+  max_h <-  which.max(hnf4a_score_perPos_bothO[i,])
+  max_f <-  which.max(foxa1_score_perPos_bothO[i,])
+  max_h_aff <- round(hnf4a_score_perPos_bothO[i,max_h],1)
+  max_f_aff <- round(foxa1_score_perPos_bothO[i,max_f],1)
+  #fh_pos <- c(max_f,max_h)[which.max(c(foxa1_score_perPos_bothO[i,max_f],hnf4a_score_perPos_bothO[i,max_h]))]
+  if(max_h_aff>=aff_cutoff ){
+    df_foranova[i,]$x4 <-  as.character(round(max_h/step,0))
+    if(hnf4a_max_score_f[i]>hnf4a_max_score_r[i]){
+      df_foranova[i,]$x8 <- "F"
+    }else{
+      df_foranova[i,]$x8 <- "R"
+    }
+  }
+  if(max_f_aff>=aff_cutoff ){
+    df_foranova[i,]$x3 <-  as.character(round(max_f/step,0))
+    if(foxa1_max_score_f[i]>foxa1_max_score_r[i]){
+      df_foranova[i,]$x7 <- "F"
+    }else{
+      df_foranova[i,]$x7 <- "R"
+    }
+  }
+
+  if(max_h_aff>=aff_cutoff && max_f_aff>=aff_cutoff){
+    dist <- (max_h-max_f)
+    df_foranova[i,]$x5 <- as.character(round(dist/step,0))
+  }
+}
+df_foranova$x6[is.na(df_foranova$x6)] <- "0"
+#df_foranova <- df_foranova %>% mutate(across(c("x2","x3","x4","x5","x6"), as.numeric))
+
+  run_anova <- function(yy,mytitle=""){
+df_foranova$y <- yy
+model <- aov(y ~ x1 + x2 + x3+x4+x5+x6+x7+x8, data = df_foranova,na.action = na.omit)
+#model <- aov(y ~ x1 + x2 + x3+x4+x6, data = df_foranova)
+
+# ANOVA table
+anova_out <- anova(model)
+ss_total <- sum(anova_out$"Sum Sq")
+
+# Add % variance explained column
+anova_out$Percent <- (anova_out$"Sum Sq" / ss_total) * 100
+print(anova_out)
+names <-   c("deltaG", "# of BS", "F pos", "H pos", "F-H distance","# of other TFBS","F orientation","H orientation","residuals")
+df_plot <- data.frame(
+  term = c("deltaG", "# of BS", "F pos", "H pos", "F-H distance","# of other TFBS","F orientation","H orientation","residuals"),
+  pct  = anova_out$Percent,
+  pval = anova_out$`Pr(>F)`
+)
+
+barorder <- c("deltaG","# of BS","# of other TFBS","F-H distance","F pos","H pos","F orientation","H orientation","residuals")
+df_plot$stars <- cut(df_plot$pval,
+  breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+  labels = c("***","**","*","")
+)
+df_plot$term <- factor(names, levels = barorder)
+colors <- setNames(c(scales::hue_pal()(8),"#F4F6F8"), barorder)
+
+ggplot(df_plot, aes(term, pct, fill = term)) +
+  geom_col(color = "black") +
+  scale_fill_manual(values = colors) +
+  geom_text(aes(label = stars), vjust = -1.2) +
+  geom_text(
+    aes(y = pct, label = paste0(round(pct,0), "%")),
+    vjust = -0.2,
+    size = 3.5
+  )+
+  theme_classic() +
+  theme(legend.position = "none",axis.line = element_blank(),axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))+
+  theme(panel.border = element_rect(color = "black", fill = NA)) +labs(title = mytitle,ylab="% Variance")
+  #scale_y_break(c(30, max(df_plot$pct)-5)) 
+}
+
+
+run_anova(gHill_par_foxa1_k4fh[all_tag,]$regP,"regP")
+run_anova(gHill_par_foxa1_k4fh[all_tag,]$hepG2_synergy,"hepG2_synergy")
+run_anova(gHill_par_foxa1_k4fh[all_tag,]$basal,"Abasal")
+run_anova(gHill_par_foxa1_k4fh[all_tag,]$Kd,"EC50")
+run_anova(gHill_par_foxa1_k4fh[all_tag,]$n,"n_H")
+
+
+```
+
+
+### direct correlation analysis
+
+```{r ,  eval=F,fig.width=3.6, fig.height=4,  echo=F,  warning=F, results='show'}
+plot(gHill_par_foxa1_k1f[smallError_list,]$Kd,gHill_par_foxa1_k1f[smallError_list,]$regP,log="x")
+test <- gHill_par_foxa1_k1f[smallError_list,]
+
+plot(gHill_par_foxa1_k4fh[smallError_list3,]$Kd,gHill_par_foxa1_k4fh[smallError_list3,]$regP,log="x")
+test <- gHill_par_foxa1_k4fh[smallError_list,]
+plot(gHill_par_foxa1_k4fh[smallError_list3,]$Kd,gHill_par_foxa1_k4fh[smallError_list3,]$basal,log="xy")
+
+plot(gHill_par_foxa1_k4fh[smallError_list3,]$Kd,gHill_par_foxa1_k4fh[smallError_list3,]$Fmax,log="xy")
+
+plot(gHill_par_foxa1_k4fh[smallError_list3,]$Kd,kd_score_F_table[smallError_list3,]$kas,log="xy")
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson's r") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 0, vjust = 1, size = 12, hjust = 0.5),axis.text.y = element_text(angle = 0, vjust = 0.5, size = 12, hjust= 1))+
+ coord_fixed()
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.62, 0.75),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 5.7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+```
+
+### heatmap with synergy
+
+```{r,  eval=F,fig.width=4.9, fig.height=4.9,  echo=F,  warning=F, results='show'}
+
+x=gHill_par_foxa1_k4fh
+kd=fh_ka
+#smallError_list=final_smallError
+
+cor_matrix <- x[smallError_list3,c("Kd","n","Fmax","basal","regP","hepG2_synergy")]
+
+cor_matrix$kas <- log(kd[smallError_list3,]$kas)
+
+
+plot(cor_matrix$Kd,cor_matrix$n)
+#cor_matrix$tfc <- TF_number[smallError_list,]
+
+colnames(cor_matrix) <- c("EC50","nH","Amax","Abasal","RegP","HepG2_synergy","-deltaG")
+
+cormat <- round(cor(cor_matrix[,c("EC50","nH","Amax","Abasal","RegP","HepG2_synergy")],use="pairwise.complete.obs"),2)
+#cormat[lower.tri(cormat)] <- NA
+melted_cormat <- melt(cormat, na.rm = TRUE)
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson's r") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 0, vjust = 1, size = 12, hjust = 0.5),axis.text.y = element_text(angle = 0, vjust = 0.5, size = 12, hjust= 1))+
+ coord_fixed()
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank())
+#  legend.justification = c(1, 0),
+#  legend.position = c(0.62, 0.75),
+#  legend.direction = "horizontal")+
+#  guides(fill = guide_colorbar(barwidth = 5.7, barheight = 1,
+#                title.position = "top", title.hjust = 0.5))
+
+
+```
+
+
+```{r,  eval=F,fig.width=4, fig.height=4,  echo=F,  warning=F, results='show'}
+
+cor_matrix <- gHill_par_foxa1_k1f[smallError_list,]
+cor_matrix$fc <- cor_matrix$Fmax/cor_matrix$basal
+
+
+cor_matrix$r2<-NULL
+cor_matrix$kas <- kd_score_F_table[smallError_list,]$kas
+cor_matrix$tfc <- TF_number[smallError_list,]
+
+colnames(cor_matrix) <- c("EC50","nH","Fmax","basal","RegP","1/Kd","tf#")
+
+cormat <- round(cor(cor_matrix,use="pairwise.complete.obs"),3)
+cormat[lower.tri(cormat)] <- NA
+melted_cormat <- melt(cormat, na.rm = TRUE)
+
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson's r") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 0, vjust = 1, size = 12, hjust = 0.5),axis.text.y = element_text(angle = 0, vjust = 0.5, size = 12, hjust= 1))+
+ coord_fixed()
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.62, 0.75),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 5.7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+```
+
+### supp
+
+```{r,  eval=F,fig.width=3.6, fig.height=4,  echo=F, warning=F, results='show'}
+
+
+#smallError_list <- bc_full_list[which(target[bc_full_list,]$s1/target[bc_full_list,]$s5>2)]
+#smallError_list <- (bc_full_list[which(apply(target[bc_full_list,],1,max)-apply(target[bc_full_list,],1,min)>apply(target_dev[bc_full_list,],1,max)*4)])
+#smallError_list <- (bc_full_list[which(kd_score_F_table[bc_full_list,]$kas>1/80)])
+#smallError_list <- (bc_full_list[which(gHill_par_foxa1_k1f[bc_full_list,]$Kd<80)])
+#smallError_list <- the100_list
+
+plot(1/kd_score_F_table[smallError_list,]$kas, gHill_par_foxa1_k1f[smallError_list,]$Kd,log="xy")
+
+plot(kd_score_F_table[smallError_list,]$kas, target[smallError_list,]$s1/target[smallError_list,]$s5,log="xy")
+cor(log(kd_score_F_table[smallError_list,]$kas), log(target[smallError_list,]$s1/target[smallError_list,]$s5))^2
+
+high_aff <- the100_list
+low_aff <- mutF_list
+
+target <-  f_hsp_matrix_3rMean[c(high_aff,low_aff),]
+label <- c(rep("high",length(high_aff)),rep("ano",length(low_aff)))
+
+flat_dataframe <- data.frame(expr=c(target$s5,target$s4,target$s3d5,target$s3,target$s2d5,target$s2,target$s1d5,target$s1),conc=rep(c("A","B","C","D","E","F","G","H"),each=length(label)),bs=rep(label,8))
+
+ggplot(flat_dataframe, aes(x=conc, y=expr, fill=bs)) + geom_boxplot()+ scale_y_log10() + theme_bw()+theme(  panel.grid.major = element_blank(),   panel.grid.minor = element_blank())+scale_fill_manual(values=c("grey","#E86F77"))
+
+boxplot(response[low_aff,],response[high_aff,],response[high_aff,],names=c("many TFBS","mid","few TFBS"),ylab="Cfp")
+boxplot(gHill_par_foxa1_k1f[low_aff,]$Kd,gHill_par_foxa1_k1f[high_aff,]$Kd,names=c("many TFBS","few TFBS"),ylab="Cfp")
+
+manyTF_list <- row.names(TF_number)[which(TF_number$n>15)]
+
+midTF_list <- row.names(TF_number)[which(TF_number$n<=15 & TF_number$n>=5)]
+
+fewTF_list <- row.names(TF_number)[which(TF_number$n<5)]
+
+plot(gHill_par_foxa1_k1f[smallError_list,]$n, motif_count[smallError_list,],log="")
+
+boxplot(gHill_par_foxa1_k1f[manyTF_list,]$n,gHill_par_foxa1_k1f[midTF_list,]$n,gHill_par_foxa1_k1f[fewTF_list,]$n,names=c("many TFBS","mid","few TFBS"),ylab="Cfp")
+
+
+#boxplot(foxa1_params_all[manyTF_list,]$Cfp,foxa1_params_all[midTF_list,]$Cfp,foxa1_params_all[fewTF_list,]$Cfp,names=c("many TFBS","mid","few TFBS"),ylab="Cfp")
+
+```
